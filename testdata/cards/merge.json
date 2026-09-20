@@ -1,0 +1,25 @@
+{
+  "schema_version": 0,
+  "id": "merge",
+  "context": [
+    "task.objective",
+    "task.state",
+    "option.target"
+  ],
+  "capabilities": [
+    {
+      "name": "option.propose"
+    },
+    {
+      "name": "option.merge"
+    },
+    {
+      "name": "process.execute",
+      "scope": "lease.sandbox"
+    }
+  ],
+  "limits": {
+    "lease.wall_ms": 600000
+  },
+  "influence": {}
+}

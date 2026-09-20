@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scp_harness_role_card_v0.schema.json",
+  "title": "SCP Harness Role Card v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "context",
+    "capabilities",
+    "limits",
+    "influence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 0
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "task.objective",
+          "task.state",
+          "option.target",
+          "option.lineage.direct",
+          "claim.related",
+          "artifact.metadata",
+          "artifact.content",
+          "test.result",
+          "review.findings",
+          "ledger.resource",
+          "repository.snapshot"
+        ]
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "task.create",
+                  "task.extend",
+                  "task.suspend",
+                  "task.resume",
+                  "task.complete",
+                  "option.propose",
+                  "option.refine",
+                  "option.split",
+                  "option.merge",
+                  "option.allocate",
+                  "option.complete",
+                  "claim.publish",
+                  "resource.propose",
+                  "review.decide",
+                  "attempt.interrupt",
+                  "artifact.export"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "scope"
+            ],
+            "properties": {
+              "name": {
+                "const": "repository.read"
+              },
+              "scope": {
+                "const": "task.repository"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "scope"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "sandbox.write",
+                  "process.execute"
+                ]
+              },
+              "scope": {
+                "const": "lease.sandbox"
+              }
+            }
+          }
+        ]
+      },
+      "uniqueItems": true
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease.wall_ms"
+      ],
+      "properties": {
+        "lease.wall_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "influence": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_.-]+$"
+      },
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    }
+  }
+}

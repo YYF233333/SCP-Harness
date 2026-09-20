@@ -1,0 +1,87 @@
+{
+  "schema_version": 0,
+  "database": ".local/example/scp.db",
+  "artifact_store": ".local/example/artifacts",
+  "operator_actor_card": "O5-1",
+  "role_cards": {
+    "O5-1": "testdata/cards/O5-1.json",
+    "operator": "testdata/cards/operator.json",
+    "reviewer": "testdata/cards/reviewer.json",
+    "merge": "testdata/cards/merge.json"
+  },
+  "wsl": {
+    "distro": "SCP-Worker",
+    "attempt_root": "/scp/attempt"
+  },
+  "exploration": {
+    "initial_option_generation_attempts": 1
+  },
+  "limits": {
+    "workspace_max_files": 10000,
+    "workspace_max_bytes": 104857600,
+    "single_file_max_bytes": 16777216,
+    "path_max_bytes": 240,
+    "stdout_max_bytes": 1048576,
+    "stderr_max_bytes": 1048576,
+    "result_max_bytes": 1048576,
+    "git_export_max_bytes": 134217728,
+    "external_process_timeout_ms": 60000
+  },
+  "protected_test": {
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "timeout_ms": 60000,
+    "output_limit_bytes": 1048576
+  },
+  "workers": [
+    {
+      "id": "operator",
+      "command": [
+        "/opt/scp-workers/operator"
+      ],
+      "actor_card": "operator",
+      "timeout_ms": 60000,
+      "workspace": "writable",
+      "synthetic_git": true,
+      "unavailable_exit_codes": [
+        75
+      ]
+    },
+    {
+      "id": "reviewer",
+      "command": [
+        "/opt/scp-workers/reviewer"
+      ],
+      "actor_card": "reviewer",
+      "timeout_ms": 60000,
+      "workspace": "readonly",
+      "synthetic_git": false,
+      "unavailable_exit_codes": [
+        75
+      ]
+    },
+    {
+      "id": "merge",
+      "command": [
+        "/opt/scp-workers/merge"
+      ],
+      "actor_card": "merge",
+      "timeout_ms": 60000,
+      "workspace": "none",
+      "synthetic_git": false,
+      "unavailable_exit_codes": [
+        75
+      ]
+    }
+  ],
+  "operation_profiles": {
+    "mutation": "operator",
+    "review": "reviewer",
+    "option_generation": "merge",
+    "merge_judge": "merge",
+    "merge_synth": "merge"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": 0,
+  "id": "operator",
+  "context": [
+    "task.objective",
+    "task.state",
+    "option.target",
+    "option.lineage.direct",
+    "claim.related",
+    "artifact.metadata",
+    "artifact.content",
+    "test.result",
+    "review.findings",
+    "ledger.resource"
+  ],
+  "capabilities": [
+    {
+      "name": "option.propose"
+    },
+    {
+      "name": "claim.publish"
+    },
+    {
+      "name": "repository.read",
+      "scope": "task.repository"
+    },
+    {
+      "name": "sandbox.write",
+      "scope": "lease.sandbox"
+    },
+    {
+      "name": "process.execute",
+      "scope": "lease.sandbox"
+    }
+  ],
+  "limits": {
+    "lease.wall_ms": 600000
+  },
+  "influence": {}
+}

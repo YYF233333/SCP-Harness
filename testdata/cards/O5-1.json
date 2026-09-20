@@ -1,0 +1,82 @@
+{
+  "schema_version": 0,
+  "id": "O5-1",
+  "context": [
+    "task.objective",
+    "task.state",
+    "option.target",
+    "option.lineage.direct",
+    "claim.related",
+    "artifact.metadata",
+    "artifact.content",
+    "test.result",
+    "review.findings",
+    "ledger.resource"
+  ],
+  "capabilities": [
+    {
+      "name": "task.create"
+    },
+    {
+      "name": "task.extend"
+    },
+    {
+      "name": "task.suspend"
+    },
+    {
+      "name": "task.resume"
+    },
+    {
+      "name": "task.complete"
+    },
+    {
+      "name": "option.propose"
+    },
+    {
+      "name": "option.refine"
+    },
+    {
+      "name": "option.split"
+    },
+    {
+      "name": "option.merge"
+    },
+    {
+      "name": "option.allocate"
+    },
+    {
+      "name": "option.complete"
+    },
+    {
+      "name": "claim.publish"
+    },
+    {
+      "name": "resource.propose"
+    },
+    {
+      "name": "review.decide"
+    },
+    {
+      "name": "attempt.interrupt"
+    },
+    {
+      "name": "artifact.export"
+    },
+    {
+      "name": "repository.read",
+      "scope": "task.repository"
+    },
+    {
+      "name": "sandbox.write",
+      "scope": "lease.sandbox"
+    },
+    {
+      "name": "process.execute",
+      "scope": "lease.sandbox"
+    }
+  ],
+  "limits": {
+    "lease.wall_ms": 600000
+  },
+  "influence": {}
+}

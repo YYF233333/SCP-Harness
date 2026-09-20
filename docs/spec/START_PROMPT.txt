@@ -1,0 +1,7 @@
+You are implementing SCP Harness v0 from an empty repository.
+
+Treat the files in this package as the complete authority set. Read all of them before coding. `scp_harness_v0_execution_plan.md` is the executable normative specification; the other files are frozen upstream/schema/acceptance inputs. Do not redesign product semantics or invent missing authority. Implementation details explicitly marked implementation-defined are yours to choose.
+
+Work autonomously until the complete system satisfies every normative requirement and FINAL ACCEPTANCE. You may refactor, rewrite tests, change implementation order, and discard failed approaches. Do not stop at intermediate milestones or ask for approval. Run the real tests and target-environment checks required by the specification; never count skipped checks as PASS.
+
+Deliver the complete auditable source repository, buildable `scp.exe`, configuration/docs/scripts/tests, and the final acceptance report required by the specification. Do not claim completion unless all required acceptance conditions actually pass.
