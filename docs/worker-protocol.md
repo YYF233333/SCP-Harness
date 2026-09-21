@@ -7,7 +7,7 @@ The execution plan includes the O5 council's 2026-09-21 Claim clarification;
 execution-plan hash was `c99d4c1c3dfe742c2c012e1481bc58aeb8742b7bad141d3c8cf5392c000c6e23`.
 
 Each configured executable runs as the unprivileged `scp` user in the dedicated
-`SCP-Worker` WSL2 distro. Core supplies these environment variables:
+`SCP-Worker` WSL2 distro. Protected tests run separately in `SCP-Test`. Core supplies these environment variables to worker Attempts:
 
 | Variable | Path |
 | --- | --- |
@@ -15,6 +15,10 @@ Each configured executable runs as the unprivileged `scp` user in the dedicated
 | `SCP_CONTEXT` | `/scp/attempt/context` |
 | `SCP_WORKSPACE` | `/scp/attempt/workspace` |
 | `SCP_RESULT` | `/scp/attempt/result.json` |
+
+For native Linux integration, the same fields and environment variables contain
+absolute paths under the fixture-local execution directory. Workers must read
+the supplied paths instead of assuming `/scp/attempt`. No result schema changes.
 
 Read `input.json` to determine the operation, target, frozen actor card and
 created-against state. The current directory is the workspace when one exists,
@@ -49,7 +53,9 @@ capability-qualified completion behaviour. Other free-text types do not imply
 review, promotion, completion or resource effects.
 
 Configured reserved exit codes indicate `WORKER_UNAVAILABLE`. Ordinary nonzero
-exits are crashes. Core always terminates the distro before capture, including on
-normal exit, so descendants cannot modify submitted state. Regular files and
+exits are crashes. Core always terminates the worker distro before capture, including on
+normal exit, so descendants cannot modify submitted state. Native Linux execution
+uses process-group termination; explicit recovery also terminates recorded groups
+left by a crashed Core. Regular files and
 directories are supported; links and special files fail closed. A synthetic Git
 repository contains one base commit, no remotes, and is excluded from capture.

@@ -52,14 +52,14 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 	} else if p.TargetType == "OPTION" {
 		anchor = p.TargetID
 	}
-	in := worker.Input{Version: 0, AttemptID: a.ID, Operation: a.Operation, Objective: t.Objective, Target: worker.Target{Type: p.TargetType, ID: p.TargetID}, Card: card, Origin: worker.Origin{SHA: a.SHA, Revision: a.Revision}, Context: worker.Root{Root: c.Config.WSL.Root + "/context"}, Workspace: worker.Workspace{Mode: profile.Workspace, Root: c.Config.WSL.Root + "/workspace", BaseSHA: base, ArtifactID: source, Synthetic: profile.Synthetic}, OutputSchema: a.Operation}
+	in := worker.Input{Version: 0, AttemptID: a.ID, Operation: a.Operation, Objective: t.Objective, Target: worker.Target{Type: p.TargetType, ID: p.TargetID}, Card: card, Origin: worker.Origin{SHA: a.SHA, Revision: a.Revision}, Context: worker.Root{Root: c.Runner.Root() + "/context"}, Workspace: worker.Workspace{Mode: profile.Workspace, Root: c.Runner.Root() + "/workspace", BaseSHA: base, ArtifactID: source, Synthetic: profile.Synthetic}, OutputSchema: a.Operation}
 	if anchor != "" {
 		in.Anchor = &worker.Anchor{OptionID: anchor}
 	}
 	if profile.Workspace == "none" {
 		in.Workspace.BaseSHA = ""
 	}
-	if e = worker.ValidateInput(in); e != nil {
+	if e = worker.ValidateInput(in, c.Runner.Root()); e != nil {
 		return nil, e
 	}
 	if e = writeJSON(filepath.Join(host, "input.json"), in); e != nil {

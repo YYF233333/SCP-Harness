@@ -15,7 +15,9 @@ $python = @'
 import pathlib, subprocess, sys
 p = pathlib.Path(sys.argv[1])
 with p.open('rb') as f:
-    subprocess.run(['wsl.exe', '-d', 'SCP-Worker', '-u', 'root', '--cd', '/', '--exec', 'sh', '-c', 'cat > /opt/scp-workers/fake-worker && chmod 755 /opt/scp-workers/fake-worker'], stdin=f, check=True, timeout=60)
+    for distro in ('SCP-Worker', 'SCP-Test'):
+        f.seek(0)
+        subprocess.run(['wsl.exe', '-d', distro, '-u', 'root', '--cd', '/', '--exec', 'sh', '-c', 'cat > /opt/scp-workers/fake-worker && chmod 755 /opt/scp-workers/fake-worker'], stdin=f, check=True, timeout=60)
 '@
 python -c $python $output
 if ($LASTEXITCODE -ne 0) { throw 'Fixture worker installation failed' }

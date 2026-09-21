@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
@@ -168,7 +170,7 @@ func TestPromotionJournalActualProcessCrashAndRecovery(t *testing.T) {
 		})
 	}
 }
-func TestActualCoreCrashCapturesWorkerAndChargesFullLease(t *testing.T) {
+func testCoreCrashRecovery(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
 	task, e := c.CreateTask(context.Background(), "crash recovery", repo, "refs/heads/main", c.Operator().ID, 300000)
 	if e != nil {
@@ -183,7 +185,7 @@ func TestActualCoreCrashCapturesWorkerAndChargesFullLease(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 120000); e != nil {
 		t.Fatal(e)
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "vorton"}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "vorton"}
 	path := saveConfig(t, c)
 	ctx, kill := context.WithCancel(context.Background())
 	defer kill()
@@ -199,7 +201,7 @@ func TestActualCoreCrashCapturesWorkerAndChargesFullLease(t *testing.T) {
 			}
 		}
 		if attempt != nil {
-			r, e := c.Runner.Control(context.Background(), []string{"test", "-f", "/scp/attempt/workspace/bad.txt"}, nil, nil, 128)
+			r, e := c.Runner.Control(context.Background(), []string{"test", "-f", c.Runner.Root() + "/workspace/bad.txt"}, nil, nil, 128)
 			if e == nil && r.ExitCode == 0 {
 				break
 			}

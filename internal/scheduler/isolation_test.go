@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
@@ -6,17 +8,17 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/config"
+	"scp-harness/internal/gitrepo"
 	"scp-harness/internal/model"
 )
 
-func Test10000CommitSyntheticHistoryAndActualInteropIsolation(t *testing.T) {
+func Test10000CommitSyntheticHistory(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
 	var history bytes.Buffer
 	base := fixtureGit(t, repo, "rev-parse", "HEAD")
@@ -30,7 +32,7 @@ func Test10000CommitSyntheticHistoryAndActualInteropIsolation(t *testing.T) {
 		fmt.Fprint(&history, "\n")
 	}
 	fmt.Fprint(&history, "done\n")
-	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: []string{"git.exe", "-C", repo, "fast-import", "--quiet"}, Stdin: &history, Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: []string{gitrepo.Executable(), "-C", repo, "fast-import", "--quiet"}, Stdin: &history, Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 	if e != nil || r.ExitCode != 0 {
 		t.Fatalf("history fixture: %v %s", e, r.Stderr)
 	}
@@ -47,7 +49,7 @@ func Test10000CommitSyntheticHistoryAndActualInteropIsolation(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 60000); e != nil {
 		t.Fatal(e)
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "malicious-git-worker"}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "malicious-git-worker"}
 	card := c.Config.Cards["operator"]
 	card.Context = append(card.Context, "repository.snapshot")
 	c.Config.Cards["operator"] = card
@@ -79,25 +81,7 @@ func Test10000CommitSyntheticHistoryAndActualInteropIsolation(t *testing.T) {
 		}
 	}
 	f.Close()
-	// Probe the actual Windows process boundary using an existing OS executable,
-	// streamed into the isolated filesystem. No host drives are mounted.
-	pe, e := os.Open(filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	r, e = c.Runner.Control(context.Background(), []string{"sh", "-c", "cat > /opt/scp-workers/interop-probe.exe && chmod 755 /opt/scp-workers/interop-probe.exe"}, pe, nil, 1024)
-	pe.Close()
-	if e != nil || r.ExitCode != 0 {
-		t.Fatal("interop probe transfer")
-	}
-	r, e = c.Runner.Run(context.Background(), "scp", []string{"/opt/scp-workers/interop-probe.exe", "/c", "exit", "0"}, nil, nil, 5*time.Second, 65536, 65536)
-	if e == nil && r.ExitCode == 0 {
-		t.Fatal("Windows interop is enabled")
-	}
-	r, e = c.Runner.Control(context.Background(), []string{"test", "!", "-d", "/mnt/c/Windows"}, nil, nil, 1024)
-	if e != nil || r.ExitCode != 0 {
-		t.Fatal("Windows host filesystem visible")
-	}
+
 }
 func TestUnauthorizedReviewAndOneTimeIndependentExploration(t *testing.T) {
 	engine, task, _, a := candidate(t, "fake-reviewer-approve")
@@ -124,7 +108,7 @@ func TestUnauthorizedReviewAndOneTimeIndependentExploration(t *testing.T) {
 		t.Fatal(e)
 	}
 	c.Config.Exploration.N = 2
-	c.Config.Workers[2].Command = []string{"/opt/scp-workers/fake-worker", "generate-one-worker"}
+	c.Config.Workers[2].Command = []string{fixtureWorker(t), "generate-one-worker"}
 	second, e := c.CreateTask(context.Background(), "two fresh explorers", task.RepoPath, task.RepoRef, c.Operator().ID, 120000)
 	if e != nil {
 		t.Fatal(e)
@@ -156,8 +140,8 @@ func TestExecutableModeSurvivesCaptureTestReviewAndPromotion(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 60000); e != nil {
 		t.Fatal(e)
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "executable-worker"}
-	c.Config.Workers[1].Command = []string{"/opt/scp-workers/fake-worker", "fake-reviewer-approve"}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "executable-worker"}
+	c.Config.Workers[1].Command = []string{fixtureWorker(t), "fake-reviewer-approve"}
 	c.Config.Test.Command = []string{"./run.sh"}
 	for i := 0; i < 4; i++ {
 		step(t, engine)

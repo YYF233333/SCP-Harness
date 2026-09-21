@@ -20,7 +20,7 @@ import (
 
 func attrGit(t *testing.T, repo string, args ...string) []byte {
 	t.Helper()
-	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{"git.exe", "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{Executable(), "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 	if e != nil || r.ExitCode != 0 {
 		t.Fatalf("Git fixture %v: %v %s", args, e, r.Stderr)
 	}
@@ -270,7 +270,7 @@ func TestR4NonTreeAttributeIsolation(t *testing.T) {
 		key, value, _ := strings.Cut(v, "=")
 		vars[key] = value
 	}
-	for key, value := range map[string]string{"GIT_ATTR_NOSYSTEM": "1", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": "NUL", "GIT_CONFIG_GLOBAL": "NUL"} {
+	for key, value := range map[string]string{"GIT_ATTR_NOSYSTEM": "1", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.DevNull, "GIT_CONFIG_GLOBAL": os.DevNull} {
 		if vars[key] != value {
 			t.Fatalf("missing explicit isolation %s", key)
 		}

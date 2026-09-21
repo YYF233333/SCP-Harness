@@ -181,8 +181,9 @@ type Config struct {
 	Operator  string            `json:"operator_actor_card"`
 	RoleCards map[string]string `json:"role_cards"`
 	WSL       struct {
-		Distro string `json:"distro"`
-		Root   string `json:"attempt_root"`
+		Distro     string `json:"distro"`
+		TestDistro string `json:"test_distro"`
+		Root       string `json:"attempt_root"`
 	} `json:"wsl"`
 	Exploration struct {
 		N int `json:"initial_option_generation_attempts"`
@@ -208,7 +209,7 @@ func Load(path string) (*Config, error) {
 		return nil, model.Err("INVALID_CONFIG", "%v", e)
 	}
 	fail := func(msg string) (*Config, error) { return nil, model.Err("INVALID_CONFIG", "%s", msg) }
-	if c.Version != 0 || strings.TrimSpace(c.Database) == "" || strings.TrimSpace(c.Artifacts) == "" || c.WSL.Distro != "SCP-Worker" || c.WSL.Root != "/scp/attempt" || c.Exploration.N <= 0 {
+	if c.Version != 0 || strings.TrimSpace(c.Database) == "" || strings.TrimSpace(c.Artifacts) == "" || c.WSL.Distro != "SCP-Worker" || c.WSL.TestDistro != "SCP-Test" || c.WSL.Root != "/scp/attempt" || c.Exploration.N <= 0 {
 		return fail("invalid version/paths/runner/exploration")
 	}
 	for _, v := range []int64{c.Limits.Files, c.Limits.Bytes, c.Limits.Single, c.Limits.Path, c.Limits.Stdout, c.Limits.Stderr, c.Limits.Result, c.Limits.Export, c.Limits.ProcessMS, c.Test.Timeout, c.Test.Output} {

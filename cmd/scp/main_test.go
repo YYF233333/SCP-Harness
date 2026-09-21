@@ -16,6 +16,7 @@ import (
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/config"
 	"scp-harness/internal/core"
+	"scp-harness/internal/gitrepo"
 	"scp-harness/internal/model"
 )
 
@@ -85,7 +86,7 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 		t.Fatal(e)
 	}
 	git := func(args ...string) {
-		r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{"git.exe", "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+		r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{gitrepo.Executable(), "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 		if e != nil || r.ExitCode != 0 {
 			t.Fatalf("Git fixture: %v %s", e, r.Stderr)
 		}

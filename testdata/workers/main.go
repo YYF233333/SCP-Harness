@@ -159,15 +159,6 @@ func main() {
 		must(os.Symlink("README.md", filepath.Join(os.Getenv("SCP_WORKSPACE"), "unsupported-link")))
 		mutation("PROMOTE_FINAL")
 		return
-	case "continue-worker":
-		if read("stage.txt") == "" {
-			write("stage.txt", "one\n")
-			mutation("CONTINUE_FINAL")
-		} else {
-			write("stage.txt", "two\n")
-			mutation("PROMOTE_FINAL")
-		}
-		return
 	case "vorton":
 		vorton(in)
 		return

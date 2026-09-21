@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package main
 
 import (
@@ -16,7 +18,7 @@ import (
 	"scp-harness/internal/store"
 )
 
-func TestR1bCrossProcessControlAndSettlement(t *testing.T) {
+func testCrossProcessControl(t *testing.T) {
 	root, e := filepath.Abs(filepath.Join("..", ".."))
 	if e != nil {
 		t.Fatal(e)

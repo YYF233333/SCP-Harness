@@ -2,8 +2,15 @@
 import json, os, pwd, stat, sys, tarfile
 
 op, root = sys.argv[1:3]
-if root != '/scp/attempt':
+if root != '/scp/attempt' and not (os.path.isabs(root) and os.path.basename(root).endswith(('.local-worker', '.local-test'))):
     raise SystemExit(42)
+
+local = os.geteuid() != 0
+uid = os.getuid() if local else pwd.getpwnam('scp').pw_uid
+
+def own(filename, writable):
+    if not local:
+        os.chown(filename, uid if writable else 0, uid if writable else 0)
 
 def fail(message):
     print(message, file=sys.stderr)
@@ -53,6 +60,8 @@ def discard(base, limits):
     removed = 0
     try:
         while removed < budget:
+            if local:
+                os.fchmod(fd, 0o700)
             with os.scandir(fd) as entries:
                 entry = next(entries, None)
             if entry is None:
@@ -87,8 +96,7 @@ if op == 'prepare':
             if not member.isfile() and not member.isdir():
                 fail('unsupported incoming archive member')
             archive.extract(member, root, filter='data')
-    uid = pwd.getpwnam('scp').pw_uid
-    os.chown(root + '/result.json', uid, uid)
+    own(root + '/result.json', True)
     os.chmod(root + '/result.json', 0o600)
     os.chmod(root + '/input.json', 0o444)
 elif op == 'restore':
@@ -103,16 +111,15 @@ elif op == 'restore':
                     os.chmod(filename, member.mode & 0o777)
 elif op == 'permissions':
     limits, mode = json.loads(sys.argv[3]), sys.argv[4]
-    uid = pwd.getpwnam('scp').pw_uid
     for area in ('context', 'workspace'):
         base = root + '/' + area
         if not os.path.isdir(base):
             continue
         writable = area == 'workspace' and mode == 'writable'
         for filename, name, info in scan(base, limits):
-            os.chown(filename, uid if writable else 0, uid if writable else 0)
+            own(filename, writable)
             os.chmod(filename, (0o755 if stat.S_ISDIR(info.st_mode) else 0o644 | (info.st_mode & 0o111)) if writable else (0o555 if stat.S_ISDIR(info.st_mode) else 0o444 | (info.st_mode & 0o111)))
-        os.chown(base, uid if writable else 0, uid if writable else 0)
+        own(base, writable)
         os.chmod(base, 0o755 if writable else 0o555)
 elif op == 'capture':
     limits = json.loads(sys.argv[3])

@@ -1,8 +1,13 @@
-param()
+param([ValidateSet('SCP-Worker', 'SCP-Test')][string[]]$Distro = @('SCP-Worker', 'SCP-Test'))
 $ErrorActionPreference = 'Stop'
 $env:WSL_UTF8 = '1'
+if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before configuring execution distros.' }
 $listing = (wsl --list --verbose | Out-String) -replace "`0", ''
-if ($LASTEXITCODE -ne 0 -or $listing -notmatch 'SCP-Worker\s+\S+\s+2') { throw 'Dedicated WSL2 SCP-Worker must already exist. See docs/operations.md for explicit import steps.' }
+if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate WSL distros.' }
+foreach ($name in $Distro) {
+    if ($listing -notmatch ([regex]::Escape($name) + '\s+\S+\s+2')) { throw "Dedicated WSL2 $name must already exist. See docs/operations.md." }
+}
+
 $script = @'
 set -eu
 id scp >/dev/null 2>&1 || useradd --create-home --shell /bin/sh scp
@@ -22,10 +27,12 @@ systemd=false
 default=scp
 CONFIG
 '@
-$script -replace "`r", '' | wsl -d SCP-Worker -u root --cd / --exec sh -c "sed 's/\r$//' | sh"
-if ($LASTEXITCODE -ne 0) { throw 'Dedicated distro configuration failed' }
-wsl --terminate SCP-Worker
-if ($LASTEXITCODE -ne 0) { throw 'Dedicated distro termination failed' }
-wsl -d SCP-Worker -u scp --cd / --exec sh -c 'test -z "$WSL_INTEROP" && ! mount | grep -q " type 9p .*path=[A-Za-z]:" && test ! -d /mnt/c/Windows'
-if ($LASTEXITCODE -ne 0) { throw 'Automount/interop isolation verification failed' }
-Write-Output 'Dedicated SCP-Worker WSL2 isolation verified.'
+foreach ($name in $Distro) {
+    $script -replace "`r", '' | wsl -d $name -u root --cd / --exec sh -c "sed 's/\r$//' | sh"
+    if ($LASTEXITCODE -ne 0) { throw "Dedicated $name configuration failed" }
+    wsl --terminate $name
+    if ($LASTEXITCODE -ne 0) { throw "Dedicated $name termination failed" }
+    wsl -d $name -u scp --cd / --exec sh -c 'test -z "$WSL_INTEROP" && ! mount | grep -q " type 9p .*path=[A-Za-z]:" && test ! -d /mnt/c/Windows'
+    if ($LASTEXITCODE -ne 0) { throw "$name automount/interop isolation verification failed" }
+    Write-Output "Dedicated $name WSL2 isolation verified."
+}

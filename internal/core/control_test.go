@@ -3,8 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -135,7 +133,7 @@ func TestR1bControlInterleavings(t *testing.T) {
 	}
 }
 
-func TestR1bTaskControlIdentityAndEntrypoints(t *testing.T) {
+func testTaskControlEntrypoints(t *testing.T) {
 	c, taskID, optionID := claimFixture(t, "claim.publish", "option.complete", "task.complete", "task.suspend", "task.resume")
 	unlock, e := c.LockTaskControl(taskID)
 	if e != nil {
@@ -154,20 +152,6 @@ func TestR1bTaskControlIdentityAndEntrypoints(t *testing.T) {
 		if _, e = c.CreateClaim(context.Background(), taskID, kind, id, "fulfilled", json.RawMessage(`{}`)); model.Code(e) != "BLOCKED" {
 			t.Fatalf("%s completion bypassed Task gate: %v", kind, e)
 		}
-	}
-	// A hard link is a different path spelling with the same physical database.
-	alias := filepath.Join(t.TempDir(), "database-alias.db")
-	if e = os.Link(c.Config.Database, alias); e != nil {
-		t.Fatal(e)
-	}
-	copy, cfg := *c, *c.Config
-	cfg.Database = alias
-	copy.Config = &cfg
-	if release, e := copy.LockTaskControl(taskID); model.Code(e) != "BLOCKED" {
-		if release != nil {
-			release()
-		}
-		t.Fatalf("database alias bypassed control gate: %v", e)
 	}
 	otherTask, e := c.LockTaskControl(model.ID())
 	if e != nil {

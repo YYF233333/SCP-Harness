@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package main
 
 import (
@@ -7,11 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/config"
+	"scp-harness/internal/gitrepo"
 )
 
 // Final acceptance supplies the exact delivered executable. Ordinary go test
@@ -20,7 +24,10 @@ func acceptanceExecutable(t *testing.T, root, dir string) string {
 	t.Helper()
 	executable := os.Getenv("SCP_ACCEPTANCE_EXE")
 	if executable == "" {
-		executable = filepath.Join(dir, "scp.exe")
+		executable = filepath.Join(dir, "scp")
+		if runtime.GOOS == "windows" {
+			executable += ".exe"
+		}
 		r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: []string{"go", "build", "-trimpath", "-buildvcs=true", "-o", executable, "./cmd/scp"}, Dir: root, Timeout: 2 * time.Minute, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 		if e != nil || r.ExitCode != 0 {
 			t.Fatalf("build acceptance executable: %v %s", e, r.Stderr)
@@ -29,7 +36,7 @@ func acceptanceExecutable(t *testing.T, root, dir string) string {
 	return executable
 }
 
-func TestAcceptanceExecutable(t *testing.T) {
+func testAcceptanceExecutable(t *testing.T) {
 	root, e := filepath.Abs(filepath.Join("..", ".."))
 	if e != nil {
 		t.Fatal(e)
@@ -83,7 +90,7 @@ func TestAcceptanceExecutable(t *testing.T) {
 	}
 	git := func(args ...string) {
 		t.Helper()
-		r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{"git.exe", "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+		r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{gitrepo.Executable(), "-C", repo}, args...), Timeout: 30 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 		if e != nil || r.ExitCode != 0 {
 			t.Fatalf("Git fixture: %v %s", e, r.Stderr)
 		}

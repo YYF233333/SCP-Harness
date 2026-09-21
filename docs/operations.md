@@ -1,40 +1,110 @@
 # SCP Harness v0 operations
 
-Source and final acceptance are governed by `docs/spec/scp_harness_v0_execution_plan.md`.
+Execution semantics remain governed by `docs/spec/scp_harness_v0_execution_plan.md`.
+The O5 test-layering decision supersedes its older Windows-only testing policy.
 All Windows development and commands below run in the original repository.
 
-## Toolchain and dedicated worker environment
+## Daily Linux and Windows release testing
 
-Install Windows tools through Scoop:
+Daily development, CI and protected tests use Linux. In an unprivileged Linux
+session (the `scp` user in `SCP-Test`), the default commands are:
 
-```powershell
-scoop install go git python311
-go version
-git --version
+```sh
+go test ./...
+go vet ./...
+# Equivalent uncached daily entry point:
+sh scripts/test-daily.sh
 ```
 
-The validated build toolchain is Go 1.27.1 windows/amd64. `modernc.org/sqlite`
-is pinned in `go.mod`; `go.sum` pins its transitive module graph. No additional
-direct Go dependency is used. WSL2 is a Windows OS prerequisite.
+The local fixture builds the ordinary worker executable from
+`testdata/workers/main.go` and starts it directly. It uses real Git, SQLite,
+filesystem permissions, process groups, CLI subprocesses and crash/recovery.
+It never invokes `wsl.exe`. Each fixture has separate `.local-worker` and
+`.local-test` directories prefixed by its temporary database filename. These are disposable
+test data, not copies of the production Core database or Artifact store.
+Run as a non-root user so read-only workspace checks use real Unix permissions.
+This local path tests semantics; the Windows/WSL host isolation boundary belongs
+to release validation.
 
-Provision a new dedicated distro from an official Ubuntu rootfs; never use or
-clone an existing development distro. The bootstrap used this explicit import:
+Windows-specific test entry points require `-tags=release`. The release script
+selects only the nine platform boundary tests listed in
+[test-migration.md](test-migration.md). A plain Windows `go test ./...` does not
+start WSL and is not a substitute for the daily Linux suite. Shared test bodies
+keep portable lifecycle, settlement and recovery assertions in the Linux suite.
 
-```powershell
-# Download from https://releases.ubuntu.com/noble/ and verify SHA256SUMS first.
-# ubuntu-24.04.4-wsl-amd64.wsl SHA-256:
-# 9b2f7730dc68227dd04a9f3e5eab86ad85caf556b8606ad94f1f29ff5c4fd3f5
-wsl --import SCP-Worker "$env:LOCALAPPDATA\SCP-Harness\SCP-Worker" <verified-rootfs-path> --version 2
-.\scripts\setup-worker-wsl.ps1
+All development edits remain in the original Windows repository. To execute its
+current files in the isolated test distro, use `scripts/test-daily.ps1`. It streams
+a source-only execution snapshot (including uncommitted changes, without `.git`)
+to a fresh `/tmp/scp-daily.*` directory in `SCP-Test`; it does not create another
+development repository. Stop the normal scheduler first, because it uses the
+same dedicated test distro. Logs and the source hash are saved under
+`.local/daily/`. The execution snapshot is retained for manual inspection and
+cleanup; the script prints its exact path.
+
+## Two dedicated WSL2 environments
+
+The Windows production controller keeps the authoritative repository, SQLite and
+Artifact store on Windows. Neither distro receives those production stores.
+`SCP-Worker` runs mutation, review, option generation and merge workers.
+`SCP-Test` runs protected tests and the daily Linux suite, with its own toolchain.
+Only runtimes, required worker credentials and disposable execution files belong
+in these distros. Local integration tests create their own temporary Git/SQLite/
+Artifact fixtures inside the test environment.
+
+Both `/etc/wsl.conf` files contain:
+
+```ini
+[automount]
+enabled=false
+mountFsTab=false
+
+[interop]
+enabled=false
+appendWindowsPath=false
 ```
 
-The setup script only configures `SCP-Worker`. It disables drive automount and
-Windows interop, disables systemd, creates `scp`, `/scp` and `/opt/scp-workers`,
-and verifies isolation. Linux `python3`, `tar` and `git` are required; the documented
-Ubuntu image contains them. Install each worker's own runtime/credentials inside
-this distro. Authoritative repositories, SQLite and Artifact storage stay on Windows.
-The trust boundary assumes configured native worker software is trusted; model
-outputs and candidate code do not gain Core authority.
+The existing single global execution slot still serializes all work:
+`SCP-Worker mutation -> capture Artifact -> SCP-Test protected test ->
+SCP-Worker review -> promotion`. Protected tests restore a fresh writable copy,
+record PASS/FAIL/timeout with the existing lease rules, then discard that copy.
+They cannot alter the Core-configured command, timeout, policy or interpretation.
+Recovery terminates and cleans both environments before releasing the slot.
+
+Use an official Ubuntu rootfs verified against its published SHA-256 to create
+`SCP-Test`; do not clone a development or worker distro. The setup script leaves
+an existing distro and Go installation in place. Supply a verified Linux amd64 Go
+1.26+ archive on first installation; omit the archive arguments when Go is
+already provisioned. Windows needs Go, Git and Python.
+
+```powershell
+.\scripts\setup-test-wsl.ps1 -Rootfs <official-rootfs> -RootfsSHA256 <published-hash> -GoArchive <linux-amd64-go.tar.gz> -GoArchiveSHA256 <published-hash>
+.\scripts\configure-wsl-memory.ps1
+```
+
+`setup-test-wsl.ps1` imports only `SCP-Test` if absent, installs Git/Python/tar,
+and calls `setup-worker-wsl.ps1` to configure and verify both dedicated distros.
+`SCP-Worker` must already exist from its original verified rootfs installation.
+The configuration requires distinct `wsl.distro = SCP-Worker` and
+`wsl.test_distro = SCP-Test`; add the latter to an existing operator config.
+Both use `/scp/attempt` inside their separate filesystems.
+
+The Windows user-level `%USERPROFILE%/.wslconfig` sets the shared WSL2 VM limit:
+
+```ini
+[wsl2]
+memory=8GB
+```
+
+This is one 8 GiB VM cap, not 8 GiB per distro. The memory script backs up the
+existing file, preserves other settings (including networking mode), and restarts
+WSL to apply the cap. Stop SCP and other active WSL work before running it.
+Release validation checks both the setting and Linux-visible memory.
+
+If WSL cannot reach the Go module proxy, run `scripts/install-test-modules.ps1`
+from Windows before the daily suite. It verifies the existing Windows module
+cache and transfers only the modules pinned in this project's `go.mod` through
+stdin. Linux Go still verifies `go.sum`; proxy/TLS settings and drive isolation
+remain unchanged. This is dependency provisioning, not a copy of Core state.
 
 Archive attributes are unsupported. Any `export-ignore` or `export-subst` text in
 an exact-SHA tracked `.gitattributes` blob (including comments, disabled rules and
@@ -53,11 +123,12 @@ Copy `scp.example.json` to a caller-selected config file and explicitly set
 database, Artifact store, card paths, worker commands, protected test command,
 all limits and timeouts. Relative host paths resolve against the config directory.
 The example's worker commands are installation locations to fill, and its protected
-test command is `go test ./...`; install that runtime inside the distro if used.
+test command is `go test ./...` in `SCP-Test`; provision the toolchain and module cache there before self-hosting. Set an explicit timeout and funded test budget appropriate to the daily suite.
 These are examples, not defaults. `scp init` also requires a valid existing config.
 
+Use the fixed, previously accepted controller (`scp.exe`) for normal work.
+
 ```powershell
-.\scripts\build.ps1
 .\scp.exe --config .\scp.json --json init
 .\scp.exe --config .\scp.json --json task create --objective "Example objective" --repo C:\path\to\repo --ref refs/heads/main --responsible-actor O5-1 --wall-ms 600000
 .\scp.exe --config .\scp.json run
@@ -80,11 +151,11 @@ the repository. `task resume <id>` observes the current ref while preserving old
 provenance. Task close retires every remaining account balance exactly once.
 
 Task lifecycle changes, Option close and qualifying `fulfilled` Claims share one
-non-waiting Core control gate per physical database file and Task ID. Contention
+non-waiting Core control gate per database and Task ID. Contention
 returns `BLOCKED`; it is not retried. The Windows gate uses atomic creation of a
 named kernel mutex and retains only the first creator's non-inheritable handle;
 handle lifetime provides exclusion without thread ownership or Go thread pinning.
-The name includes database volume/file identity, so path aliases share the gate.
+The Windows name includes database volume/file identity. Linux local execution uses a nonblocking file lock per configured database path and Task ID; its lock files are retained to avoid changing a held lock inode. Database hardlink aliases are outside the v0 acceptance requirements.
 See [CreateMutexW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw)
 and [file identity](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
 
@@ -104,7 +175,7 @@ capture, settlement and reconciliation. A live controller causes `BLOCKED`.
 
 Ctrl+C stops `run` normally. A stale `run.lock` is deliberately not removed by
 `run`; execute `scp recover` after the old process has stopped. Recovery owns the
-same global slot, terminates WSL, captures writable interrupted state, charges
+same global slot, terminates both WSL distros (or local process groups), captures writable interrupted state, charges
 uncertain leases fully, and reconciles PREPARED Git journals using the actual ref.
 It cleans only Core-owned disposable runtime trees/transfers and the stale lock;
 Artifact blobs, Attempt inputs and logs remain audit evidence.
@@ -117,27 +188,26 @@ SQLite/Artifact durability failures and invariant failures stop all new executio
 If persistence itself fails, the process reports the failure and leaves recovery
 necessary; it never treats an unrecorded effect as successful.
 
-## Build, test and audit
+## Release verification and controller replacement
+
+A normal promotion requires the daily Linux protected test, not Windows release
+acceptance. Keep the previously accepted controller fixed while it develops a
+new `main`. At a release or milestone, stop the scheduler and verify the reviewed,
+committed source on the actual Windows 11 host with both real WSL2 distros:
 
 ```powershell
-.\scripts\install-test-workers.ps1
-go test ./...
-go vet ./...
 .\scripts\build.ps1
 .\scripts\final-acceptance.ps1 -KnownNormativeFailures none
 ```
 
-The fixture executable is compiled from `testdata/workers/main.go` and installed
-in the dedicated distro. It is an ordinary configured executable, never linked
-into production Core. Integration tests use real Windows Git, SQLite, WSL,
-process termination, filesystem permissions and CAS. They fail on unsupported
-hosts; no WSL acceptance test silently skips. Do not run a production scheduler
-while these tests use the single dedicated worker distro.
+`build.ps1` writes `.local/build/scp.exe`. `final-acceptance.ps1` builds a separate
+release candidate under `.local/acceptance/<HEAD>/`, installs fixture executables
+in both distros, runs only the release selection with `-tags=release`, and records
+the source HEAD, binary hash, test log and mapping. Neither script overwrites the
+accepted root `scp.exe`. O5 review and a user's explicit replacement follow release
+verification; a green daily suite never replaces the controller automatically.
 
 Pass `none` only after reviewing normative conformance as well as tests; otherwise
-pass the remaining failures. The script records this explicit assessment and does
-not infer it from a green test run. It builds and tests the delivered executable,
-records the exact HEAD, build command, binary SHA-256, uncached test results and
-acceptance mapping under `.local/acceptance/<HEAD>/`, and submits for O5 review.
-`scp.exe` and this generated evidence are derived outputs. All production code,
-embedded helper/SQL sources, tests and scripts belong to the source commit.
+pass the remaining failures. Unsupported release hosts fail rather than skip or
+substitute mocks. Daily Linux evidence is recorded separately and must not be
+inferred from the Windows release result.

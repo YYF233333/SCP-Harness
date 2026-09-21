@@ -11,6 +11,7 @@
   },
   "wsl": {
     "distro": "SCP-Worker",
+    "test_distro": "SCP-Test",
     "attempt_root": "/scp/attempt"
   },
   "exploration": {

@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (

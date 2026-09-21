@@ -41,7 +41,7 @@ func (g *Git) invoke(ctx context.Context, category string, args, env []string, i
 	return r, nil
 }
 func argv(repo string, args ...string) []string {
-	return append([]string{"git.exe", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.hooksPath=NUL", "-C", repo}, args...)
+	return append([]string{Executable(), "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.hooksPath=" + os.DevNull, "-C", repo}, args...)
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -124,7 +124,7 @@ func (g *Git) Snapshot(ctx context.Context, repo, sha, root, keep string) (resul
 }
 func (g *Git) Synthetic(ctx context.Context) error {
 	runner := wsl.Runner{Config: g.Config}
-	root := g.Config.WSL.Root + "/workspace"
+	root := runner.Root() + "/workspace"
 	for _, args := range [][]string{{"init"}, {"add", "-A", "-f"}, {"-c", "user.name=SCP", "-c", "user.email=scp@local", "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "SCP base"}} {
 		cmd := runner.Args("root", append([]string{"git", "-C", root}, args...)...)
 		r, e := g.invoke(ctx, "synthetic_git", cmd, nil, nil, nil, g.Config.Limits.Stdout)
@@ -149,7 +149,7 @@ func (g *Git) Construct(ctx context.Context, t model.Task, a model.Artifact, tre
 	}
 	index := filepath.Join(filepath.Dir(tree), "index-"+model.ID())
 	defer os.Remove(index)
-	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + tree, "GIT_AUTHOR_NAME=SCP", "GIT_AUTHOR_EMAIL=scp@local", "GIT_COMMITTER_NAME=SCP", "GIT_COMMITTER_EMAIL=scp@local", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=NUL"}
+	env := []string{"GIT_INDEX_FILE=" + index, "GIT_WORK_TREE=" + tree, "GIT_AUTHOR_NAME=SCP", "GIT_AUTHOR_EMAIL=scp@local", "GIT_COMMITTER_NAME=SCP", "GIT_COMMITTER_EMAIL=scp@local", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull}
 	call := func(args ...string) (string, error) {
 		r, e := g.invoke(ctx, "promotion", argv(t.RepoPath, args...), env, nil, nil, g.Config.Limits.Stdout)
 		if e != nil {

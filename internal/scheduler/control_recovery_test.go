@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
@@ -42,7 +44,7 @@ func r1bProcess(t *testing.T, cmd boundedexec.Command) (context.CancelFunc, func
 
 // The barriers are durable DB state and a file written by the real WSL worker.
 // Timing only bounds observation; a sleep duration is never an assertion.
-func TestR1bControlExitRequiresExplicitRecovery(t *testing.T) {
+func testControlExitRecovery(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
 	task, e := c.CreateTask(context.Background(), "R1b control crash", repo, "refs/heads/main", c.Operator().ID, 300000)
 	if e != nil {
@@ -68,7 +70,7 @@ func TestR1bControlExitRequiresExplicitRecovery(t *testing.T) {
 	if model.Code(e) != "BLOCKED" || !reflect.DeepEqual(before, state(t, c)) {
 		t.Fatalf("recovery stole a live control before cancellation: %v", e)
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "vorton"}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "vorton"}
 	path := saveConfig(t, c)
 	killExecution, joinExecution := r1bProcess(t, crashCommand(t, path, "running"))
 	deadline := time.NewTimer(30 * time.Second)
@@ -83,7 +85,7 @@ func TestR1bControlExitRequiresExplicitRecovery(t *testing.T) {
 			}
 		}
 		if attemptID != "" {
-			r, e := c.Runner.Control(context.Background(), []string{"test", "-f", "/scp/attempt/workspace/bad.txt"}, nil, nil, 128)
+			r, e := c.Runner.Control(context.Background(), []string{"test", "-f", c.Runner.Root() + "/workspace/bad.txt"}, nil, nil, 128)
 			if e == nil && r.ExitCode == 0 {
 				break
 			}
@@ -161,7 +163,7 @@ func TestR1bControlExitRequiresExplicitRecovery(t *testing.T) {
 			}
 		}
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "success-worker"}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "success-worker"}
 	step(t, engine)
 	if len(state(t, c).Attempts) != len(s.Attempts)+1 {
 		t.Fatal("explicit recovery did not restore dispatch")

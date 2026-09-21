@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
@@ -26,8 +28,8 @@ func candidate(t *testing.T, reviewMode string) (*Scheduler, *model.Task, *model
 	if _, e = c.Allocate(o.ID, 120000); e != nil {
 		t.Fatal(e)
 	}
-	c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "workspace-writer"}
-	c.Config.Workers[1].Command = []string{"/opt/scp-workers/fake-worker", reviewMode}
+	c.Config.Workers[0].Command = []string{fixtureWorker(t), "workspace-writer"}
+	c.Config.Workers[1].Command = []string{fixtureWorker(t), reviewMode}
 	step(t, engine)
 	s := state(t, c)
 	p := s.Pending[task.ID]
@@ -41,7 +43,7 @@ func TestProtectedTestCannotBeOverriddenAndReviewerReadonly(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			engine, task, o, a := candidate(t, "readonly-reviewer")
 			c := engine.Core
-			c.Config.Test.Command = []string{"/opt/scp-workers/fake-worker", "protected-test", kind}
+			c.Config.Test.Command = []string{fixtureWorker(t), "protected-test", kind}
 			if kind == "timeout" {
 				c.Config.Test.Timeout = 2000
 			}
@@ -123,7 +125,7 @@ func TestBlockedPendingTestResumesAndResourcePauseKeepsTarget(t *testing.T) {
 	if e != nil || ran {
 		t.Fatal("automatic blocker retry")
 	}
-	c.Config.Test.Command = []string{"/opt/scp-workers/fake-worker", "protected-test"}
+	c.Config.Test.Command = []string{fixtureWorker(t), "protected-test"}
 	for _, b := range s.Blockers {
 		if _, e = c.ResolveBlocker(b.ID); e != nil {
 			t.Fatal(e)

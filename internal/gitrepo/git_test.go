@@ -24,7 +24,7 @@ func fixture(t *testing.T, count int) (*Git, string) {
 	}
 	repo := t.TempDir()
 	run := func(in *bytes.Buffer, args ...string) {
-		cmd := boundedexec.Command{Argv: append([]string{"git.exe", "-C", repo}, args...), Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20}
+		cmd := boundedexec.Command{Argv: append([]string{Executable(), "-C", repo}, args...), Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20}
 		if in != nil {
 			cmd.Stdin = in
 		}

@@ -65,11 +65,15 @@ func TestConfigRejectsUnknownAndMissingBounds(t *testing.T) {
 	if e = json.Unmarshal(b, &base); e != nil {
 		t.Fatal(e)
 	}
-	for _, kind := range []string{"unknown", "zero_timeout", "missing_limit", "duplicate_operation"} {
+	for _, kind := range []string{"unknown", "zero_timeout", "missing_limit", "duplicate_operation", "shared_distro", "missing_test_distro"} {
 		t.Run(kind, func(t *testing.T) {
 			var m map[string]any
 			json.Unmarshal(b, &m)
 			switch kind {
+			case "shared_distro":
+				m["wsl"].(map[string]any)["test_distro"] = "SCP-Worker"
+			case "missing_test_distro":
+				delete(m["wsl"].(map[string]any), "test_distro")
 			case "unknown":
 				m["extra"] = true
 			case "zero_timeout":

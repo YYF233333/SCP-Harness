@@ -81,6 +81,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	cmd.Stdout = ow
 	cmd.Stderr = ew
 	cmd.WaitDelay = time.Second
+	configure(cmd)
 	start := time.Now()
 	if e := cmd.Start(); e != nil {
 		r.Elapsed = time.Since(start)

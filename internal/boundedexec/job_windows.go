@@ -4,6 +4,7 @@ package boundedexec
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 	"unsafe"
 )
@@ -12,6 +13,8 @@ var kernel = syscall.NewLazyDLL("kernel32.dll")
 var createJob = kernel.NewProc("CreateJobObjectW")
 var setJob = kernel.NewProc("SetInformationJobObject")
 var assignJob = kernel.NewProc("AssignProcessToJobObject")
+
+func configure(cmd *exec.Cmd) {}
 
 type basicLimit struct {
 	ProcessTime, JobTime   int64

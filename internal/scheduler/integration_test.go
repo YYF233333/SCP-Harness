@@ -1,3 +1,5 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
@@ -8,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -18,12 +19,13 @@ import (
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/config"
 	"scp-harness/internal/core"
+	"scp-harness/internal/gitrepo"
 	"scp-harness/internal/model"
 )
 
 func fixtureGit(t *testing.T, repo string, args ...string) string {
 	t.Helper()
-	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{"git.exe", "-C", repo}, args...), Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+	r, e := boundedexec.Run(context.Background(), boundedexec.Command{Argv: append([]string{gitrepo.Executable(), "-C", repo}, args...), Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20})
 	if e != nil || r.ExitCode != 0 {
 		t.Fatalf("fixture Git %v: %v %s", args, e, r.Stderr)
 	}
@@ -31,9 +33,7 @@ func fixtureGit(t *testing.T, repo string, args ...string) string {
 }
 func integrationCore(t *testing.T, mode string) (*core.Core, string) {
 	t.Helper()
-	if runtime.GOOS != "windows" {
-		t.Fatal("Windows 11 + dedicated SCP-Worker WSL2 integration is mandatory; not run on this host")
-	}
+
 	cfg, e := config.Load(filepath.Join("..", "..", "scp.example.json"))
 	if e != nil {
 		t.Fatal(e)
@@ -41,18 +41,16 @@ func integrationCore(t *testing.T, mode string) (*core.Core, string) {
 	dir := t.TempDir()
 	cfg.Database = filepath.Join(dir, "state.db")
 	cfg.Artifacts = filepath.Join(dir, "artifacts")
-	cfg.Test.Command = []string{"/opt/scp-workers/fake-worker", "protected-test"}
+	cfg.Test.Command = []string{fixtureWorker(t), "protected-test"}
 	for i := range cfg.Workers {
-		cfg.Workers[i].Command = []string{"/opt/scp-workers/fake-worker", mode}
+		cfg.Workers[i].Command = []string{fixtureWorker(t), mode}
 	}
 	c, e := core.Open(cfg, true)
 	if e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { c.Store.Close() })
-	if e = c.Runner.Check(context.Background()); e != nil {
-		t.Fatal(e)
-	}
+	prepareIntegration(t, c)
 	repo := filepath.Join(dir, "repo")
 	if e = os.Mkdir(repo, 0700); e != nil {
 		t.Fatal(e)
@@ -152,7 +150,7 @@ func assertTree(t *testing.T, c *core.Core, repo, sha string, expected map[strin
 	}
 }
 
-func TestFrozenVortonA10(t *testing.T) {
+func testFrozenVortonA10(t *testing.T) {
 	c, repo := integrationCore(t, "vorton")
 	ctx := context.Background()
 	engine := New(c)
@@ -324,7 +322,7 @@ func TestFrozenVortonA10(t *testing.T) {
 	if s.Options[bad.ID].Status != "OPEN" || s.Pending[t1.ID] != nil || artifactText(t, s.Artifacts[*interrupted.ArtifactID], "bad.txt") != "interrupted\n" {
 		t.Fatal("CP6 semantics")
 	}
-	r, e := c.Runner.Control(ctx, []string{"sh", "-c", "pgrep -f '/opt/scp-workers/fake-worker forever' | grep -v $$ || true"}, nil, nil, 4096)
+	r, e := c.Runner.Control(ctx, []string{"sh", "-c", "for pid in " + strings.Join(strings.Fields(pids), " ") + "; do test ! -e /proc/$pid/stat || test $(awk '{print $3}' /proc/$pid/stat) = Z || echo $pid; done"}, nil, nil, 4096)
 	if e != nil || strings.TrimSpace(string(r.Stdout)) != "" {
 		t.Fatalf("CP6 descendants survived: %v %s", e, r.Stdout)
 	}
@@ -416,7 +414,7 @@ func TestFrozenVortonA10(t *testing.T) {
 	t.Logf("frozen Vorton complete, real charges: T1=%d T2=%d", s.Tasks[t1.ID].Resources.Charged, s.Tasks[t2.ID].Resources.Charged)
 }
 
-func TestRealWorkerLifecycle(t *testing.T) {
+func testRealWorkerLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		mode, status string
 		artifact     bool
@@ -436,7 +434,7 @@ func TestRealWorkerLifecycle(t *testing.T) {
 			if _, e = c.Allocate(o.ID, 60000); e != nil {
 				t.Fatal(e)
 			}
-			c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", tc.mode}
+			c.Config.Workers[0].Command = []string{fixtureWorker(t), tc.mode}
 			if tc.mode == "timeout-worker" {
 				c.Config.Workers[0].Timeout = 3000
 			}
@@ -480,7 +478,7 @@ func TestRealWorkerLifecycle(t *testing.T) {
 					if b.Kind != "WORKER_UNAVAILABLE" || b.Scope != "WORKER_PROFILE" {
 						t.Fatal("wrong blocker")
 					}
-					c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "success-worker"}
+					c.Config.Workers[0].Command = []string{fixtureWorker(t), "success-worker"}
 					if _, e = c.ResolveBlocker(b.ID); e != nil {
 						t.Fatal(e)
 					}

@@ -66,11 +66,11 @@ func Identity(path string) (string, string, error) {
 			if e != nil {
 				return "", "", model.Err("REPOSITORY_UNAVAILABLE", "Git identity: %v", e)
 			}
-			return root, strings.ToLower(filepath.Clean(gitdir)), nil
+			return root, identityPath(gitdir), nil
 		}
 		if _, e = os.Stat(filepath.Join(p, "HEAD")); e == nil {
 			if info, e = os.Stat(filepath.Join(p, "objects")); e == nil && info.IsDir() {
-				return p, strings.ToLower(filepath.Clean(p)), nil
+				return p, identityPath(p), nil
 			}
 		}
 		if filepath.Dir(p) == p {

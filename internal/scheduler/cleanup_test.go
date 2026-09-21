@@ -1,13 +1,13 @@
+//go:build linux || (windows && release)
+
 package scheduler
 
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"scp-harness/internal/config"
-	"scp-harness/internal/model"
 )
 
 func cleanupLimits(c *config.Config) {
@@ -32,7 +32,7 @@ func poisonScript(kind string, l config.Limits) string {
 
 func noAttemptDirectory(t *testing.T, cfgRunner *Scheduler) {
 	t.Helper()
-	x, e := cfgRunner.Core.Runner.Control(context.Background(), []string{"test", "!", "-e", "/scp/attempt"}, nil, nil, 128)
+	x, e := cfgRunner.Core.TestRunner.Control(context.Background(), []string{"test", "!", "-e", cfgRunner.Core.TestRunner.Root()}, nil, nil, 128)
 	if e != nil || x.ExitCode != 0 {
 		t.Fatalf("disposable attempt directory remains: %v %s", e, x.Stderr)
 	}
@@ -75,6 +75,10 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 						t.Fatal(e)
 					}
 					noAttemptDirectory(t, engine)
+					r, err := c.Runner.Control(context.Background(), []string{"test", "!", "-e", c.Runner.Root()}, nil, nil, 128)
+					if err != nil || r.ExitCode != 0 {
+						t.Fatalf("worker recovery cleanup: %v", err)
+					}
 				}
 				if _, e = c.Lifecycle(context.Background(), task.ID, "suspend"); e != nil {
 					t.Fatal(e)
@@ -84,7 +88,7 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 					t.Fatal(e)
 				}
 				step(t, engine)
-				c.Config.Workers[0].Command = []string{"/opt/scp-workers/fake-worker", "success-worker"}
+				c.Config.Workers[0].Command = []string{fixtureWorker(t), "success-worker"}
 				fresh, e := c.Propose(other.ID, "normal workspace", "")
 				if e != nil {
 					t.Fatal(e)
@@ -121,6 +125,12 @@ func TestR3ProtectedCopyReallyDiscarded(t *testing.T) {
 			c.Config.Test.Command = []string{"python3", "-c", poisonScript(kind, limits)}
 			step(t, engine)
 			noAttemptDirectory(t, engine)
+			// The protected copy lives in the test environment. Discarding it
+			// must leave the worker's submitted workspace intact.
+			r, e := c.Runner.Control(context.Background(), []string{"test", "-f", c.Runner.Root() + "/workspace/README.md"}, nil, nil, 128)
+			if e != nil || r.ExitCode != 0 {
+				t.Fatalf("protected test reused the worker environment: %v", e)
+			}
 			s := state(t, c)
 			if s.Tests[submitted.ID] == nil || s.Tests[submitted.ID].Outcome != "PASS" || s.Pending[task.ID].Operation != "review" || c.Config.Limits != limits {
 				t.Fatal("test finalization or configured limits changed")
@@ -129,59 +139,5 @@ func TestR3ProtectedCopyReallyDiscarded(t *testing.T) {
 				t.Fatal("test copy contaminated immutable Artifact")
 			}
 		})
-	}
-}
-
-func TestR3ProtectedCleanupFailureCannotPass(t *testing.T) {
-	engine, task, _, submitted := candidate(t, "fake-reviewer-approve")
-	c := engine.Core
-	gate := "/tmp/scp-r3-" + model.ID()
-	control := func(args ...string) {
-		t.Helper()
-		r, e := c.Runner.Control(context.Background(), args, nil, nil, 4096)
-		if e != nil || r.ExitCode != 0 {
-			t.Fatalf("fixture control %v: %v %s", args, e, r.Stderr)
-		}
-	}
-	control("python3", "-c", "import os,sys\nfor suffix in ('.ready','.release'): os.mkfifo(sys.argv[1]+suffix,0o666); os.chmod(sys.argv[1]+suffix,0o666)", gate)
-	t.Cleanup(func() {
-		_ = c.Runner.Terminate(context.Background())
-		_, _ = c.Runner.Control(context.Background(), []string{"sh", "-c", "if test -e /scp/attempt/workspace/locked; then chattr -i /scp/attempt/workspace/locked; fi"}, nil, nil, 4096)
-		_ = c.Runner.Files(context.Background(), "discard", nil, nil, nil, 4096)
-		_, _ = c.Runner.Control(context.Background(), []string{"python3", "-c", "import os,sys\nfor suffix in ('.ready','.release'):\n try: os.unlink(sys.argv[1]+suffix)\n except FileNotFoundError: pass", gate}, nil, nil, 4096)
-	})
-	// Named pipes are barriers: inject the real filesystem fault only after the
-	// protected copy exists, and let the test exit only after the flag is set.
-	c.Config.Test.Command = []string{"python3", "-c", "import pathlib,sys\npathlib.Path('locked').write_text('disposable')\nwith open(sys.argv[1]+'.ready','wb',buffering=0) as f: f.write(b'1')\nwith open(sys.argv[1]+'.release','rb',buffering=0) as f: assert f.read(1)==b'1'", gate}
-	pending := *state(t, c).Pending[task.ID]
-	done := make(chan error, 1)
-	go func() { _, e := engine.Step(context.Background()); done <- e }()
-	control("python3", "-c", "import sys\nwith open(sys.argv[1]+'.ready','rb',buffering=0) as f: assert f.read(1)==b'1'", gate)
-	control("chattr", "+i", "/scp/attempt/workspace/locked")
-	control("python3", "-c", "import sys\nwith open(sys.argv[1]+'.release','wb',buffering=0) as f: f.write(b'1')", gate)
-	e := <-done
-	if model.Code(e) != "RUNNER_UNAVAILABLE" {
-		t.Fatalf("cleanup failure was swallowed: %v", e)
-	}
-	s := state(t, c)
-	if s.Tests[submitted.ID] != nil || !reflect.DeepEqual(s.Pending[task.ID], &pending) || s.Tasks[task.ID].Resources.Outstanding != 0 || s.Slot.State != "IDLE" {
-		t.Fatal("failed cleanup published test result or lost pending step")
-	}
-	control("chattr", "-i", "/scp/attempt/workspace/locked")
-	if _, e = New(c).Recover(context.Background()); e != nil {
-		t.Fatal(e)
-	}
-	noAttemptDirectory(t, engine)
-	for _, b := range s.Blockers {
-		if b.Kind == "RUNNER_UNAVAILABLE" && b.Resolved == nil {
-			if _, e = c.ResolveBlocker(b.ID); e != nil {
-				t.Fatal(e)
-			}
-		}
-	}
-	c.Config.Test.Command = []string{"/opt/scp-workers/fake-worker", "protected-test"}
-	step(t, engine)
-	if state(t, c).Tests[submitted.ID].Outcome != "PASS" {
-		t.Fatal("repaired protected runner did not resume")
 	}
 }

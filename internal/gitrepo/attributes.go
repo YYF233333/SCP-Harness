@@ -50,7 +50,7 @@ func (g *Git) archiveEnvironment(repo, parent string) ([]string, string, error) 
 	env = append(env,
 		"GIT_DIR="+metadata, "GIT_COMMON_DIR="+metadata,
 		"GIT_OBJECT_DIRECTORY="+filepath.Join(common, "objects"),
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=NUL", "GIT_CONFIG_GLOBAL=NUL",
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM="+os.DevNull, "GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
 	)
 	return env, metadata, nil
@@ -59,7 +59,7 @@ func (g *Git) archiveEnvironment(repo, parent string) ([]string, string, error) 
 const archiveBytePolicy = "* -text -eol -ident -filter -working-tree-encoding\n"
 
 func archiveArgs(repo string, args ...string) []string {
-	return argv(repo, append([]string{"-c", "core.attributesFile=NUL"}, args...)...)
+	return argv(repo, append([]string{"-c", "core.attributesFile=" + os.DevNull}, args...)...)
 }
 
 // This is a textual feature ban, not an attribute evaluator. Only tracked

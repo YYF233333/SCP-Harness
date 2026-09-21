@@ -22,7 +22,7 @@ type Outcome struct {
 
 func Run(ctx context.Context, runner wsl.Runner, p config.Profile, lease int64) (Outcome, error) {
 	start := time.Now()
-	root := runner.Config.WSL.Root
+	root := runner.Root()
 	available, e := runner.Executable(ctx, p.Command[0], root+"/workspace")
 	if e != nil {
 		return Outcome{Status: "TERMINATED", StartedAt: start}, e

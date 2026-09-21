@@ -5,94 +5,68 @@ Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     $sourceHead = (git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'Source HEAD unavailable' }
-    if (git status --porcelain) { throw 'Commit the reviewed source before final acceptance; working tree must be clean.' }
+    if (git status --porcelain) { throw 'Commit the reviewed source before release acceptance; working tree must be clean.' }
+    if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal scheduler before Windows release acceptance.' }
     $osInfo = Get-CimInstance Win32_OperatingSystem
     if ([int]$osInfo.BuildNumber -lt 22000 -or $osInfo.Caption -notmatch 'Windows 11') { throw 'Windows 11 target host is required' }
     $env:WSL_UTF8 = '1'
     $distros = (wsl --list --verbose | Out-String) -replace "`0", ''
-    if ($LASTEXITCODE -ne 0 -or $distros -notmatch 'SCP-Worker\s+\S+\s+2') { throw 'Dedicated SCP-Worker WSL2 is required' }
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate WSL distros' }
+    foreach ($distro in @('SCP-Worker', 'SCP-Test')) {
+        if ($distros -notmatch ([regex]::Escape($distro) + '\s+\S+\s+2')) { throw "Dedicated $distro WSL2 is required" }
+    }
+    $wslConfig = Get-Content -LiteralPath (Join-Path $env:USERPROFILE '.wslconfig') -Raw
+    if ($wslConfig -notmatch '(?ims)^\s*\[wsl2\]\s*$[^\[]*?^\s*memory\s*=\s*8GB\s*$') { throw 'Configure the shared WSL2 VM memory=8GB limit first.' }
+    wsl -d SCP-Test -u scp --cd / --exec python3 -c 'm=int(next(x.split()[1] for x in open("/proc/meminfo") if x.startswith("MemTotal:"))); assert 0 < m <= 8*1024*1024, m'
+    if ($LASTEXITCODE -ne 0) { throw 'The 8 GiB WSL2 VM limit is not active; restart WSL after configuration.' }
     $evidence = Join-Path (Get-Location) ".local\acceptance\$sourceHead"
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     & '.\scripts\install-test-workers.ps1'
-    if ($LASTEXITCODE -ne 0) { throw 'Real fixture executables could not be installed' }
+    if ($LASTEXITCODE -ne 0) { throw 'Real fixture installation failed' }
     $acceptanceExe = Join-Path $evidence 'scp.exe'
-    $buildCommand = "go build -trimpath -buildvcs=true -o `"$acceptanceExe`" ./cmd/scp"
     go build -trimpath -buildvcs=true -o $acceptanceExe ./cmd/scp
     if ($LASTEXITCODE -ne 0) { throw 'Source rebuild failed' }
     $env:SCP_ACCEPTANCE_EXE = $acceptanceExe
-    $testLog = Join-Path $evidence 'go-test.jsonl'
-    go test ./... -count=1 -json | Set-Content -LiteralPath $testLog -Encoding utf8
+    $cases = [ordered]@{
+        CLI = @('TestAcceptanceExecutable')
+        Control = @('TestR1bCrossProcessControlAndSettlement', 'TestR1bTaskControlIdentityAndEntrypoints')
+        Recovery = @('TestR1bControlExitRequiresExplicitRecovery', 'TestActualCoreCrashCapturesWorkerAndChargesFullLease')
+        Scheduler = @('TestRunningSchedulerSuspendSerializationSignalAndStaleLock')
+        Walkthrough = @('TestFrozenVortonA10')
+        Workers = @('TestRealWorkerLifecycle')
+        Isolation = @('TestActualInteropAndAutomountIsolation')
+    }
+    $required = @($cases.Values | ForEach-Object { $_ })
+    $selection = '^(' + (($required | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')$'
+    $testLog = Join-Path $evidence 'release-windows.jsonl'
+    go test -tags=release ./... -count=1 -json -timeout=30m -run $selection | Set-Content -LiteralPath $testLog -Encoding utf8
     $testExit = $LASTEXITCODE
-    $events = Get-Content -LiteralPath $testLog | ForEach-Object { $_ | ConvertFrom-Json }
-    $failures = @($events | Where-Object { $_.Action -eq 'fail' })
-    $testSkips = @($events | Where-Object { $_.Action -eq 'skip' -and $_.Test })
+    $events = @(Get-Content -LiteralPath $testLog | ForEach-Object { $_ | ConvertFrom-Json })
+    $failed = @($events | Where-Object { $_.Action -eq 'fail' })
+    $skipped = @($events | Where-Object { $_.Action -eq 'skip' -and $_.Test })
     $passed = @{}
     foreach ($event in $events) { if ($event.Action -eq 'pass' -and $event.Test) { $passed[$event.Test] = $true } }
-    $cases = [ordered]@{
-        A0 = @('Test10000CommitSyntheticHistoryAndActualInteropIsolation', 'TestRunningSchedulerSuspendSerializationSignalAndStaleLock', 'TestHistoryIndependentBoundedGitAndCAS')
-        A1 = @('TestCLIJSONFrozenProjectionsAndRestart', 'TestStrictSchema', 'TestConfigRejectsUnknownAndMissingBounds')
-        A2 = @('TestRealWorkerLifecycle', 'TestResultSchemas', 'TestResourceProposalExactAuthorizationAndNoLedgerEffect', 'TestWorkerProposalDenialDoesNotDiscardIndependentClaim')
-        A3 = @('TestCaptureBoundsAtomicityAndIntegrity', 'TestActualCoreCrashCapturesWorkerAndChargesFullLease', 'TestExecutableModeSurvivesCaptureTestReviewAndPromotion')
-        A4 = @('Test10000CommitSyntheticHistoryAndActualInteropIsolation', 'TestHistoryIndependentBoundedGitAndCAS')
-        A5 = @('TestRandomResourceOperationsConserve', 'TestImmutableObjectsAndExplicitMergeLCA', 'TestFulfilledRetainsExistingCompletionSemantics')
-        A6 = @('TestRunningSchedulerSuspendSerializationSignalAndStaleLock', 'TestBlockedPendingTestResumesAndResourcePauseKeepsTarget')
-        A7 = @('TestProtectedTestCannotBeOverriddenAndReviewerReadonly', 'TestInvalidReviewReworksSameImmutableArtifact', 'TestMissingAndCrashedReviewAreSyntheticRejects', 'TestFrozenVortonA10')
-        A8 = @('TestPartitionClosedSet', 'TestUnauthorizedReviewAndOneTimeIndependentExploration', 'TestFrozenVortonA10')
-        A9 = @('TestPromotionJournalActualProcessCrashAndRecovery', 'TestActualCoreCrashCapturesWorkerAndChargesFullLease', 'TestRunningSchedulerSuspendSerializationSignalAndStaleLock', 'TestPersistentInfrastructureAndFailStop', 'TestRepositoryDriftEndsChainWithoutBlocker')
-        A10 = @('TestFrozenVortonA10')
-        R1 = @('TestR1ClaimsPreserveLifecycleCancellation')
-        R1b = @('TestR1bCancellationCannotBeTakenOver', 'TestR1bControlInterleavings', 'TestR1bTaskControlIdentityAndEntrypoints', 'TestR1bCancellationErrorKeepsProtection', 'TestR1bWorkerCompletionDoesNotBlockSettlement', 'TestR1bInactiveTaskInvariant', 'TestR1bCrossProcessControlAndSettlement', 'TestR1bControlExitRequiresExplicitRecovery', 'TestR1bProtectedAdmissionChecksCancellation')
-        R2 = @('TestR2LaunchFailureRetainsArtifactStep')
-        R3 = @('TestR3OversizedWorkspaceCleanupProgress', 'TestR3ProtectedCopyReallyDiscarded', 'TestR3ProtectedCleanupFailureCannotPass', 'TestR3HostTransientCleanupProgress')
-        R4 = @('TestR4ExactSnapshotAttributes', 'TestR4ExactSHAIgnoresWorktreeAndIndex', 'TestR4NonTreeAttributeIsolation', 'TestR4InspectionFailsClosed', 'TestR4UnavailableSnapshotHasNoCandidateEffects')
-    }
-    $missing = @()
-    foreach ($name in @('TestArchitectureConstraints','TestFrozenSchemaCapabilityAndContextRegistries','TestRoleCardMathematicalNumbersMatchJSONSchema','TestInfluenceCannotChangeSchedulingAuthorizationOrLease','TestStableErrorExitCodes','TestAcceptanceExecutable')) { if (-not $passed.ContainsKey($name)) { $missing += $name } }
-    foreach ($case in $cases.Keys) { foreach ($name in $cases[$case]) { if (-not $passed.ContainsKey($name)) { $missing += "$case/$name" } } }
-    [System.IO.File]::WriteAllText((Join-Path $evidence 'go-vet.log'), '')
-    go vet ./... 2>&1 | Set-Content -LiteralPath (Join-Path $evidence 'go-vet.log') -Encoding utf8
+    $missing = @($required | Where-Object { -not $passed.ContainsKey($_) })
+    go vet -tags=release ./... 2>&1 | Set-Content -LiteralPath (Join-Path $evidence 'go-vet.log') -Encoding utf8
     $vetExit = $LASTEXITCODE
-    $binaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $acceptanceExe).Hash.ToLowerInvariant()
+    $binaryHash = (Get-FileHash -LiteralPath $acceptanceExe -Algorithm SHA256).Hash.ToLowerInvariant()
     "$binaryHash  scp.exe" | Set-Content -LiteralPath (Join-Path $evidence 'scp.exe.sha256') -Encoding utf8
-    if ($testExit -ne 0 -or $vetExit -ne 0 -or $failures.Count -gt 0 -or $testSkips.Count -gt 0 -or $missing.Count -gt 0 -or $KnownNormativeFailures -cne 'none') {
-        @('FINAL ACCEPTANCE SUBMISSION: FAIL', "HEAD: $sourceHead", "Build command: $buildCommand", "scp.exe SHA-256: $binaryHash", "go test exit: $testExit", "go vet exit: $vetExit", "Failed events: $($failures.Count)", "Skipped tests: $($testSkips.Count)", "Missing cases: $($missing -join ', ')", "Known normative failures: $KnownNormativeFailures", "Evidence: $testLog") | Set-Content -LiteralPath (Join-Path $evidence 'report.md') -Encoding utf8
-        throw 'Final acceptance failed. Inspect evidence; no completion claim is permitted.'
-    }
-    if ((git rev-parse HEAD).Trim() -ne $sourceHead -or (git status --porcelain)) { throw 'Source changed during acceptance' }
-    Copy-Item -LiteralPath $acceptanceExe -Destination '.\scp.exe' -Force
+    $passedAll = $testExit -eq 0 -and $vetExit -eq 0 -and $failed.Count -eq 0 -and $skipped.Count -eq 0 -and $missing.Count -eq 0 -and $KnownNormativeFailures -ceq 'none'
     $report = @(
-        '# SCP Harness v0 corrective evidence — O5 review pending',
-        '',
-        'Overall status: REJECT pending O5 R1b independent review. This report is not FINAL ACCEPTANCE.',
-        'O5 baseline: 829e36500f3d2cdd65ba6fbab2f37ffd699dd8d5. R4 accepted/closed by O5; R1, R2 and R3 repair conclusions retained.',
-        "HEAD: $sourceHead",
-        "Build command: $buildCommand",
-        "scp.exe SHA-256: $binaryHash",
-        "UTC: $([DateTime]::UtcNow.ToString('o'))",
+        '# Windows release verification — O5 review pending', '',
+        "HEAD: $sourceHead", "UTC: $([DateTime]::UtcNow.ToString('o'))",
         "Host: $($osInfo.Caption), build $($osInfo.BuildNumber)",
-        "Toolchain: $(go version)",
-        'Source rebuild/auditability: PASS',
-        'go test ./...: PASS (uncached, -count=1 -json)',
-        'go vet ./...: PASS',
-        'Architecture constraints: PASS',
-        'Windows+WSL2 integration: PASS',
-        'Role-card schema/golden CLI projections: PASS',
-        'Scheduler transition table: PASS',
-        'Frozen walkthrough: PASS (CP0-CP9)',
-        'Skipped acceptance tests: 0',
-        'R1b inactive-Task invariant: PASS (SUSPENDED/CLOSED has no active Attempt, outstanding lease or occupied execution slot)',
-        "Known normative failures: $KnownNormativeFailures (explicit implementer review, not inferred from test counts)",
-        '',
-        'Package-level "no test files" events are not skipped acceptance tests; their production code is exercised by the cross-package unit and integration cases below.',
-        '',
-        '| Acceptance | Result | Executed evidence |',
-        '| --- | --- | --- |'
+        "Build: go build -trimpath -buildvcs=true -o $acceptanceExe ./cmd/scp",
+        "scp.exe SHA-256: $binaryHash", "Release suite exit: $testExit", "Release vet exit: $vetExit",
+        "Skipped tests: $($skipped.Count)", "Missing cases: $($missing -join ', ')",
+        "Known normative failures: $KnownNormativeFailures", '',
+        'This suite validates actual Windows/WSL boundaries. Daily Linux semantics are verified separately with go test ./... and go vet ./....',
+        'The accepted controller is unchanged. O5 review is required before a user replaces it with this release candidate.', '',
+        '| Windows release boundary | Executed evidence |', '| --- | --- |'
     )
-    foreach ($case in $cases.Keys) { $report += "| $case | PASS | $($cases[$case] -join ', ') |" }
-    $report += @('', 'R1: internal/core/core.go protects lifecycle cancellation from non-qualifying Claims; cancellation_test.go fixes the transaction interleaving explicitly.', 'R2: internal/worker/execute.go and internal/scheduler/scheduler.go retain the infrastructure outcome and original pending Artifact step; launch_failure_test.go uses a real Windows launch error after a successful probe.', 'R3: internal/wsl/files.py, internal/wsl/wsl.go and internal/artifact/discard.go perform bounded deletion with progress independently of content admission limits; scheduler cleanup_test.go also injects a real immutable-file deletion failure.', 'R4: internal/gitrepo/attributes.go uses one exact-SHA textual Git grep and a private, controlled archive environment. No attribute evaluation/parser is used. attributes_test.go checks conservative rejection, environment isolation, bounds and the unchanged round-trip. Budget: export_attr_inspection <= 1, export_tree <= 1; all prior budgets remain unchanged.', '', 'The full machine-readable execution log is go-test.jsonl alongside this report. The scp.exe in this directory was built before verification and executed by TestAcceptanceExecutable. Git history fixtures use 1/100/10000 commits and 200 branches. Worker fixtures are ordinary executables built from delivered Go source; Core has no test-only execution path. Fault tests use real process exits/kills, WSL termination, SQLite failure injection, missing executables and filesystem failures.', '', 'Implementation submitted for O5 independent review. Development stops here.')
-    $report += @('', 'R1b: internal/core/control_windows.go keys the non-waiting cross-process gate by physical database identity and Task ID; core.go unifies control entry points and rechecks suspend quiescence. internal/store/store.go validates inactive Task execution/lease/slot invariants. runtime.go preserves settlement during competing worker completion Claims and rechecks protected-test cancellation at admission. internal/scheduler/recover.go holds the same Task gates and clears abandoned cancellation only after reconciliation.', 'R1b evidence: deterministic transaction interleavings, database path-alias and Task/database scope tests, actual CLI contention, actual CLI process kill, real WSL worker capture/full-lease recovery, failed-recovery protection, and dispatch after explicit recovery. No random sleep, skipped tests or production test hooks establish these guarantees.')
+    foreach ($case in $cases.Keys) { $report += "| $case | $($cases[$case] -join ', ') |" }
     $report | Set-Content -LiteralPath (Join-Path $evidence 'report.md') -Encoding utf8
-    Write-Output "Corrective verification evidence (O5 review pending): $evidence"
-    Write-Output "HEAD: $sourceHead"
-    Write-Output "scp.exe SHA-256: $binaryHash"
+    if (-not $passedAll) { throw "Windows release verification failed. Evidence: $evidence" }
+    if ((git rev-parse HEAD).Trim() -ne $sourceHead -or (git status --porcelain)) { throw 'Source changed during release acceptance' }
+    Write-Output "Windows release suite passed; O5 review pending: $evidence"
 } finally { $env:SCP_ACCEPTANCE_EXE = $previousAcceptanceExe; Pop-Location }

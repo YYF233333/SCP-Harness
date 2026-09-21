@@ -81,6 +81,10 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		_ = c.Block("RUNNER_UNAVAILABLE", "", "", e.Error())
 		return result, e
 	}
+	if e = c.TestRunner.Terminate(ctx); e != nil {
+		_ = c.Block("RUNNER_UNAVAILABLE", "", "", e.Error())
+		return result, e
+	}
 	for _, a := range state.Attempts {
 		if !a.Active() {
 			continue
@@ -199,6 +203,9 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 	// logs remain audit evidence; Artifact storage is never garbage-collected.
 	bounds, _ := json.Marshal(c.Config.Limits)
 	if e = c.Runner.Files(ctx, "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout); e != nil {
+		return result, e
+	}
+	if e = c.TestRunner.Files(ctx, "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout); e != nil {
 		return result, e
 	}
 	runtimeRoot := filepath.Join(filepath.Dir(c.Config.Database), "runtime")

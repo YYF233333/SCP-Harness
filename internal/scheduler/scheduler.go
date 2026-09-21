@@ -17,6 +17,7 @@ import (
 	"scp-harness/internal/ledger"
 	"scp-harness/internal/model"
 	"scp-harness/internal/worker"
+	"scp-harness/internal/wsl"
 )
 
 type Scheduler struct {
@@ -134,7 +135,7 @@ func (s *Scheduler) temp(id string) (string, error) {
 	}
 	return dir, nil
 }
-func (s *Scheduler) upload(ctx context.Context, dir, mode string, synthetic bool, source string) error {
+func (s *Scheduler) upload(ctx context.Context, runner wsl.Runner, dir, mode string, synthetic bool, source string) error {
 	c := s.Core
 	f, e := os.CreateTemp(filepath.Dir(dir), "transfer-*.tar")
 	if e != nil {
@@ -154,7 +155,7 @@ func (s *Scheduler) upload(ctx context.Context, dir, mode string, synthetic bool
 		return artifact.StorageError("transfer seek", e)
 	}
 	boundJSON, _ := json.Marshal(limits)
-	if e = c.Runner.Files(ctx, "prepare", []string{string(boundJSON)}, f, nil, c.Config.Limits.Stdout); e != nil {
+	if e = runner.Files(ctx, "prepare", []string{string(boundJSON)}, f, nil, c.Config.Limits.Stdout); e != nil {
 		return e
 	}
 	if source != "" {
@@ -162,7 +163,7 @@ func (s *Scheduler) upload(ctx context.Context, dir, mode string, synthetic bool
 		if e != nil {
 			return artifact.StorageError("workspace source", e)
 		}
-		e = c.Runner.Files(ctx, "restore", nil, snapshot, nil, c.Config.Limits.Stdout)
+		e = runner.Files(ctx, "restore", nil, snapshot, nil, c.Config.Limits.Stdout)
 		snapshot.Close()
 		if e != nil {
 			return e
@@ -174,7 +175,7 @@ func (s *Scheduler) upload(ctx context.Context, dir, mode string, synthetic bool
 		}
 	}
 	b, _ := json.Marshal(c.Config.Limits)
-	return c.Runner.Files(ctx, "permissions", []string{string(b), mode}, nil, nil, c.Config.Limits.Stdout)
+	return runner.Files(ctx, "permissions", []string{string(b), mode}, nil, nil, c.Config.Limits.Stdout)
 }
 func (s *Scheduler) capture(a *model.Attempt, p model.Step, dir string) (*model.Artifact, error) {
 	c := s.Core
@@ -280,7 +281,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 				source = st.Artifacts[p.TargetID].BlobPath
 			}
 		}
-		e = s.upload(active, dir, profile.Workspace, profile.Synthetic, source)
+		e = s.upload(active, c.Runner, dir, profile.Workspace, profile.Synthetic, source)
 		prepared = e == nil
 	}
 	out := worker.Outcome{Status: "TERMINATED"}
@@ -403,7 +404,7 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 	a := state.Artifacts[p.TargetID]
 	dir, e := s.temp(id)
 	if e == nil {
-		e = c.Runner.Check(active)
+		e = c.TestRunner.Check(active)
 	}
 	if e == nil {
 		e = os.Mkdir(filepath.Join(dir, "workspace"), 0700)
@@ -418,29 +419,29 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 		e = os.WriteFile(filepath.Join(dir, "result.json"), nil, 0600)
 	}
 	if e == nil {
-		e = s.upload(active, dir, "writable", false, a.BlobPath)
+		e = s.upload(active, c.TestRunner, dir, "writable", false, a.BlobPath)
 	}
 	r := boundedexec.Result{ExitCode: -1}
 	if e == nil {
 		var available bool
-		available, e = c.Runner.Executable(active, c.Config.Test.Command[0], c.Config.WSL.Root+"/workspace")
+		available, e = c.TestRunner.Executable(active, c.Config.Test.Command[0], c.TestRunner.Root()+"/workspace")
 		if e == nil && !available {
 			e = model.Err("RUNNER_UNAVAILABLE", "protected test executable unavailable")
 		}
 	}
 	if e == nil {
-		args := append([]string{"sh", "-c", `cd /scp/attempt/workspace && exec "$@"`, "scp-test"}, c.Config.Test.Command...)
+		args := append([]string{"sh", "-c", `cd "$1" && shift && exec "$@"`, "scp-test", c.TestRunner.Root() + "/workspace"}, c.Config.Test.Command...)
 		remaining := max(1, lease-time.Since(start).Milliseconds())
-		r, e = c.Runner.Run(active, "scp", args, nil, nil, time.Duration(remaining)*time.Millisecond, c.Config.Test.Output, c.Config.Test.Output)
+		r, e = c.TestRunner.Run(active, "scp", args, nil, nil, time.Duration(remaining)*time.Millisecond, c.Config.Test.Output, c.Config.Test.Output)
 	}
-	term := c.Runner.Terminate(context.Background())
+	term := c.TestRunner.Terminate(context.Background())
 	if term != nil {
 		e = term
 	}
 	var cleanupErr error
 	if term == nil {
 		bounds, _ := json.Marshal(c.Config.Limits)
-		cleanupErr = c.Runner.Files(context.Background(), "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout)
+		cleanupErr = c.TestRunner.Files(context.Background(), "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout)
 		if cleanupErr != nil {
 			e = cleanupErr
 		}

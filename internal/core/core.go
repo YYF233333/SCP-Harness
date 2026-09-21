@@ -18,10 +18,11 @@ import (
 )
 
 type Core struct {
-	Config *config.Config
-	Store  *store.Store
-	Git    *gitrepo.Git
-	Runner wsl.Runner
+	Config     *config.Config
+	Store      *store.Store
+	Git        *gitrepo.Git
+	Runner     wsl.Runner
+	TestRunner wsl.Runner
 }
 
 func Open(cfg *config.Config, init bool) (*Core, error) {
@@ -34,7 +35,7 @@ func Open(cfg *config.Config, init bool) (*Core, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Core{cfg, db, &gitrepo.Git{Config: cfg}, wsl.Runner{Config: cfg}}, nil
+	return &Core{Config: cfg, Store: db, Git: &gitrepo.Git{Config: cfg}, Runner: wsl.Runner{Config: cfg}, TestRunner: wsl.Runner{Config: cfg, Protected: true}}, nil
 }
 func (c *Core) Operator() config.Card { return c.Config.Cards[c.Config.Operator] }
 func (c *Core) Read() (*model.State, error) {
