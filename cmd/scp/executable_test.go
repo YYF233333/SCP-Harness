@@ -16,12 +16,8 @@ import (
 
 // Final acceptance supplies the exact delivered executable. Ordinary go test
 // builds the same source itself; neither path substitutes a fake CLI/Core.
-func TestAcceptanceExecutable(t *testing.T) {
-	root, e := filepath.Abs(filepath.Join("..", ".."))
-	if e != nil {
-		t.Fatal(e)
-	}
-	dir := t.TempDir()
+func acceptanceExecutable(t *testing.T, root, dir string) string {
+	t.Helper()
 	executable := os.Getenv("SCP_ACCEPTANCE_EXE")
 	if executable == "" {
 		executable = filepath.Join(dir, "scp.exe")
@@ -30,6 +26,16 @@ func TestAcceptanceExecutable(t *testing.T) {
 			t.Fatalf("build acceptance executable: %v %s", e, r.Stderr)
 		}
 	}
+	return executable
+}
+
+func TestAcceptanceExecutable(t *testing.T) {
+	root, e := filepath.Abs(filepath.Join("..", ".."))
+	if e != nil {
+		t.Fatal(e)
+	}
+	dir := t.TempDir()
+	executable := acceptanceExecutable(t, root, dir)
 	cfg, e := config.Load(filepath.Join(root, "scp.example.json"))
 	if e != nil {
 		t.Fatal(e)

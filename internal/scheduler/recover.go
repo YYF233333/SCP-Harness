@@ -12,8 +12,10 @@ import (
 
 	"scp-harness/internal/artifact"
 	"scp-harness/internal/boundedexec"
+	"scp-harness/internal/core"
 	"scp-harness/internal/ledger"
 	"scp-harness/internal/model"
+	"scp-harness/internal/store"
 )
 
 type Recovery struct {
@@ -39,6 +41,26 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 	if e != nil {
 		return result, e
 	}
+	// Recovery cannot steal a live control request, including the window before
+	// it writes cancellation. Hold the same Task gates until reconciliation ends.
+	controlled := core.SortedTasks(state)
+	unlocks := []func(){}
+	defer func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
+	}()
+	for _, task := range controlled {
+		unlock, e := c.LockTaskControl(task.ID)
+		if e != nil {
+			return result, e
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	state, e = c.Read()
+	if e != nil {
+		return result, e
+	}
 	if state.SlotPID != 0 && boundedexec.Alive(state.SlotPID) {
 		return result, model.Err("BLOCKED", "execution owner still alive")
 	}
@@ -47,6 +69,7 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 			return model.Err("BLOCKED", "execution/recovery owner still alive")
 		}
 		st.Slot = model.Slot{State: "BUSY"}
+		st.SlotTask = ""
 		st.SlotOwner = s.Owner
 		st.SlotPID = os.Getpid()
 		return nil
@@ -218,6 +241,21 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 			return result, artifact.StorageError("stale lock", e)
 		}
 		result.Stale = true
+	}
+	if e = c.Store.Update(func(st *model.State) error {
+		for _, task := range controlled {
+			if !store.TaskQuiescent(st, task.ID) {
+				return model.Err("BLOCKED", "recovery has not settled Task execution")
+			}
+			if st.Cancellations[task.ID] {
+				delete(st.Cancellations, task.ID)
+				delete(st.Pending, task.ID)
+				st.Audit(task.ID, "CANCELLATION_RECOVERED", "execution terminated and settled")
+			}
+		}
+		return nil
+	}); e != nil {
+		return result, e
 	}
 	return result, nil
 }

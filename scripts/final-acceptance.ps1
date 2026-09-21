@@ -41,6 +41,7 @@ try {
         A9 = @('TestPromotionJournalActualProcessCrashAndRecovery', 'TestActualCoreCrashCapturesWorkerAndChargesFullLease', 'TestRunningSchedulerSuspendSerializationSignalAndStaleLock', 'TestPersistentInfrastructureAndFailStop', 'TestRepositoryDriftEndsChainWithoutBlocker')
         A10 = @('TestFrozenVortonA10')
         R1 = @('TestR1ClaimsPreserveLifecycleCancellation')
+        R1b = @('TestR1bCancellationCannotBeTakenOver', 'TestR1bControlInterleavings', 'TestR1bTaskControlIdentityAndEntrypoints', 'TestR1bCancellationErrorKeepsProtection', 'TestR1bWorkerCompletionDoesNotBlockSettlement', 'TestR1bInactiveTaskInvariant', 'TestR1bCrossProcessControlAndSettlement', 'TestR1bControlExitRequiresExplicitRecovery', 'TestR1bProtectedAdmissionChecksCancellation')
         R2 = @('TestR2LaunchFailureRetainsArtifactStep')
         R3 = @('TestR3OversizedWorkspaceCleanupProgress', 'TestR3ProtectedCopyReallyDiscarded', 'TestR3ProtectedCleanupFailureCannotPass', 'TestR3HostTransientCleanupProgress')
         R4 = @('TestR4ExactSnapshotAttributes', 'TestR4ExactSHAIgnoresWorktreeAndIndex', 'TestR4NonTreeAttributeIsolation', 'TestR4InspectionFailsClosed', 'TestR4UnavailableSnapshotHasNoCandidateEffects')
@@ -62,7 +63,8 @@ try {
     $report = @(
         '# SCP Harness v0 corrective evidence — O5 review pending',
         '',
-        'Overall status: REJECT pending O5 R4 independent review. This report is not FINAL ACCEPTANCE.',
+        'Overall status: REJECT pending O5 R1b independent review. This report is not FINAL ACCEPTANCE.',
+        'O5 baseline: 829e36500f3d2cdd65ba6fbab2f37ffd699dd8d5. R4 accepted/closed by O5; R1, R2 and R3 repair conclusions retained.',
         "HEAD: $sourceHead",
         "Build command: $buildCommand",
         "scp.exe SHA-256: $binaryHash",
@@ -78,6 +80,7 @@ try {
         'Scheduler transition table: PASS',
         'Frozen walkthrough: PASS (CP0-CP9)',
         'Skipped acceptance tests: 0',
+        'R1b inactive-Task invariant: PASS (SUSPENDED/CLOSED has no active Attempt, outstanding lease or occupied execution slot)',
         "Known normative failures: $KnownNormativeFailures (explicit implementer review, not inferred from test counts)",
         '',
         'Package-level "no test files" events are not skipped acceptance tests; their production code is exercised by the cross-package unit and integration cases below.',
@@ -87,6 +90,7 @@ try {
     )
     foreach ($case in $cases.Keys) { $report += "| $case | PASS | $($cases[$case] -join ', ') |" }
     $report += @('', 'R1: internal/core/core.go protects lifecycle cancellation from non-qualifying Claims; cancellation_test.go fixes the transaction interleaving explicitly.', 'R2: internal/worker/execute.go and internal/scheduler/scheduler.go retain the infrastructure outcome and original pending Artifact step; launch_failure_test.go uses a real Windows launch error after a successful probe.', 'R3: internal/wsl/files.py, internal/wsl/wsl.go and internal/artifact/discard.go perform bounded deletion with progress independently of content admission limits; scheduler cleanup_test.go also injects a real immutable-file deletion failure.', 'R4: internal/gitrepo/attributes.go uses one exact-SHA textual Git grep and a private, controlled archive environment. No attribute evaluation/parser is used. attributes_test.go checks conservative rejection, environment isolation, bounds and the unchanged round-trip. Budget: export_attr_inspection <= 1, export_tree <= 1; all prior budgets remain unchanged.', '', 'The full machine-readable execution log is go-test.jsonl alongside this report. The scp.exe in this directory was built before verification and executed by TestAcceptanceExecutable. Git history fixtures use 1/100/10000 commits and 200 branches. Worker fixtures are ordinary executables built from delivered Go source; Core has no test-only execution path. Fault tests use real process exits/kills, WSL termination, SQLite failure injection, missing executables and filesystem failures.', '', 'Implementation submitted for O5 independent review. Development stops here.')
+    $report += @('', 'R1b: internal/core/control_windows.go keys the non-waiting cross-process gate by physical database identity and Task ID; core.go unifies control entry points and rechecks suspend quiescence. internal/store/store.go validates inactive Task execution/lease/slot invariants. runtime.go preserves settlement during competing worker completion Claims and rechecks protected-test cancellation at admission. internal/scheduler/recover.go holds the same Task gates and clears abandoned cancellation only after reconciliation.', 'R1b evidence: deterministic transaction interleavings, database path-alias and Task/database scope tests, actual CLI contention, actual CLI process kill, real WSL worker capture/full-lease recovery, failed-recovery protection, and dispatch after explicit recovery. No random sleep, skipped tests or production test hooks establish these guarantees.')
     $report | Set-Content -LiteralPath (Join-Path $evidence 'report.md') -Encoding utf8
     Write-Output "Corrective verification evidence (O5 review pending): $evidence"
     Write-Output "HEAD: $sourceHead"

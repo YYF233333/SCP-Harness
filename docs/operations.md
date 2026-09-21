@@ -79,6 +79,29 @@ to capture and settle. `task suspend <id>` also cancels pending work and release
 the repository. `task resume <id>` observes the current ref while preserving old
 provenance. Task close retires every remaining account balance exactly once.
 
+Task lifecycle changes, Option close and qualifying `fulfilled` Claims share one
+non-waiting Core control gate per physical database file and Task ID. Contention
+returns `BLOCKED`; it is not retried. The Windows gate uses atomic creation of a
+named kernel mutex and retains only the first creator's non-inheritable handle;
+handle lifetime provides exclusion without thread ownership or Go thread pinning.
+The name includes database volume/file identity, so path aliases share the gate.
+See [CreateMutexW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw)
+and [file identity](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
+
+The gate spans cancellation and final commit but never holds a SQLite write
+transaction while waiting. Existing execution capture/settlement remains free to
+finish. A competing worker completion Claim is recorded as `BLOCKED` independently
+of its Attempt's settlement. Ordinary informational Claims remain available.
+Before suspension commits, Core rechecks Attempts, all leases (including protected
+tests) and the execution slot; shared state validation enforces the same condition
+on both SUSPENDED and CLOSED Tasks.
+
+If control exits or fails after cancellation, the OS handle is released but the
+durable cancellation flag stays. New control requests cannot take over that flag.
+Run explicit `scp recover` after the execution/control owners have stopped.
+Recovery acquires the same Task gates and clears cancellation only after termination,
+capture, settlement and reconciliation. A live controller causes `BLOCKED`.
+
 Ctrl+C stops `run` normally. A stale `run.lock` is deliberately not removed by
 `run`; execute `scp recover` after the old process has stopped. Recovery owns the
 same global slot, terminates WSL, captures writable interrupted state, charges

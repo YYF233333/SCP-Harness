@@ -286,6 +286,12 @@ type Completion struct {
 }
 
 func (c *Core) Complete(v Completion) error {
+	var unlock func()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 	return c.Store.Update(func(s *model.State) error {
 		a := s.Attempts[v.AttemptID]
 		if a == nil || !a.Active() {
@@ -331,10 +337,22 @@ func (c *Core) Complete(v Completion) error {
 		}
 		ids := []string{}
 		if v.Valid && a.Status == "RETURNED" {
+			var controlErr error
 			for _, request := range v.Result.Claims {
 				if !card.Has("claim.publish") || !v.Visible[request.SubjectType+":"+request.SubjectID] {
 					s.Audit(t.ID, "CAPABILITY_DENIED", "worker Claim denied")
 					continue
+				}
+				if qualifyingClaim(card, request.SubjectType, request.Type) {
+					if unlock == nil && controlErr == nil {
+						unlock, controlErr = c.LockTaskControl(t.ID)
+					}
+					if controlErr != nil {
+						// Settlement/capture must finish while a controller holds
+						// its gate. Only the competing governance request fails.
+						s.Audit(t.ID, "BLOCKED", "worker completion Claim: "+controlErr.Error())
+						continue
+					}
 				}
 				if _, e := addClaim(s, t, card, request.SubjectType, request.SubjectID, request.Type, request.Payload, a.SHA, a.Revision); e != nil {
 					if model.Exit(model.Code(e)) == 5 {
@@ -479,6 +497,9 @@ func (c *Core) FinishTest(p model.Step, leaseID string, result model.TestResult,
 func (c *Core) TestLease(p model.Step, id string) (int64, error) {
 	var lease int64
 	e := c.Update(func(s *model.State) error {
+		if !c.runnable(s, &p) {
+			return model.Err("BLOCKED", "protected test no longer runnable")
+		}
 		anchor, e := c.Anchor(s, &p)
 		if e != nil {
 			return e

@@ -418,12 +418,13 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 	if e := config.Strict(payload, &obj); e != nil {
 		return nil, model.Err("INVALID_JSON", "claim payload must be object: %v", e)
 	}
-	qualifying := typ == "fulfilled" && (kind == "TASK" && card.Has("task.complete") || kind == "OPTION" && card.Has("option.complete"))
+	qualifying := qualifyingClaim(card, kind, typ)
 	if qualifying {
-		s, e := c.Read()
+		s, unlock, e := c.beginControl(taskID)
 		if e != nil {
 			return nil, e
 		}
+		defer unlock()
 		t, e := task(s, taskID)
 		if e != nil {
 			return nil, e
@@ -434,7 +435,7 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 		if t.Status == "CLOSED" || kind == "OPTION" && (s.Options[id].Status == "CLOSED" || t.Status != "ACTIVE") {
 			return nil, model.Err("INVALID_STATE", "completion subject already CLOSED")
 		}
-		if e := c.Cancel(ctx, taskID); e != nil {
+		if e := c.cancel(ctx, taskID); e != nil {
 			return nil, e
 		}
 	}
@@ -446,6 +447,9 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 		}
 		if t.Status == "CLOSED" {
 			return model.Err("INVALID_STATE", "CLOSED Task")
+		}
+		if qualifying && !store.TaskQuiescent(s, taskID) {
+			return model.Err("BLOCKED", "completion requires settled Task execution")
 		}
 		result, e = addClaim(s, t, card, kind, id, typ, payload, t.SHA, t.Revision)
 		if e != nil {
@@ -473,10 +477,23 @@ func (c *Core) CloseOption(ctx context.Context, id string) (*model.Option, error
 	if o == nil {
 		return nil, model.Err("NOT_FOUND", "Option")
 	}
+	// Only immutable membership is read before the gate; state is checked again
+	// after acquiring the same Task gate used by every other control entry.
+	s, unlock, e := c.beginControl(o.TaskID)
+	if e != nil {
+		return nil, e
+	}
+	defer unlock()
+	o, e = openOption(s, id)
+	if e != nil {
+		return nil, e
+	}
+	cancelled := false
 	if p := s.Pending[o.TaskID]; p != nil && p.OptionID == id {
-		if e = c.Cancel(ctx, o.TaskID); e != nil {
+		if e = c.cancel(ctx, o.TaskID); e != nil {
 			return nil, e
 		}
+		cancelled = true
 	}
 	var result *model.Option
 	e = c.Update(func(s *model.State) error {
@@ -485,6 +502,9 @@ func (c *Core) CloseOption(ctx context.Context, id string) (*model.Option, error
 			return e
 		}
 		t := s.Tasks[o.TaskID]
+		if cancelled && !store.TaskQuiescent(s, t.ID) {
+			return model.Err("BLOCKED", "Option close requires settled cancellation")
+		}
 		if _, e = addClaim(s, t, c.Operator(), "OPTION", id, "fulfilled", json.RawMessage(`{}`), t.SHA, t.Revision); e != nil {
 			return e
 		}
@@ -500,10 +520,11 @@ func (c *Core) Lifecycle(ctx context.Context, id, action string) (*model.Task, e
 	if e := c.Operator().Require(capability); e != nil {
 		return nil, e
 	}
-	s, e := c.Read()
+	s, unlock, e := c.beginControl(id)
 	if e != nil {
 		return nil, e
 	}
+	defer unlock()
 	t, e := task(s, id)
 	if e != nil {
 		return nil, e
@@ -523,7 +544,7 @@ func (c *Core) Lifecycle(ctx context.Context, id, action string) (*model.Task, e
 			return nil, e
 		}
 	} else {
-		if e = c.Cancel(ctx, id); e != nil {
+		if e = c.cancel(ctx, id); e != nil {
 			return nil, e
 		}
 	}
@@ -555,6 +576,9 @@ func (c *Core) finishLifecycle(id, action, sha, identity string) (*model.Task, e
 			if t.Status != "ACTIVE" {
 				return model.Err("INVALID_STATE", "Task not ACTIVE")
 			}
+			if !store.TaskQuiescent(s, id) {
+				return model.Err("BLOCKED", "suspend requires settled Task execution")
+			}
 			t.Status = "SUSPENDED"
 			delete(s.Pending, id)
 			delete(s.Cancellations, id)
@@ -584,7 +608,9 @@ func (c *Core) requestCancellation(taskID string) error {
 		return nil
 	})
 }
-func (c *Core) Cancel(ctx context.Context, taskID string) error {
+
+// cancel is shared by control operations that already hold their Task gate.
+func (c *Core) cancel(ctx context.Context, taskID string) error {
 	if e := c.requestCancellation(taskID); e != nil {
 		return e
 	}
@@ -597,7 +623,7 @@ func (c *Core) Cancel(ctx context.Context, taskID string) error {
 		if e != nil {
 			return e
 		}
-		if s.SlotTask != taskID {
+		if store.TaskQuiescent(s, taskID) {
 			break
 		}
 		select {

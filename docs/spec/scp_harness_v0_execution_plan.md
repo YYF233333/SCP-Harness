@@ -946,6 +946,16 @@ Resume：检查 actor 有 `task.resume`、Task=SUSPENDED、repository free；res
 
 Close：检查 actor 有 `task.complete`。该操作等价于由该 actor 创建一个 subject=Task、claim_type=`fulfilled` 的 qualifying Claim，然后：若有 active chain 先按 interrupt/cancel 规则机械终止并 settle 所有 outstanding lease；disable descendant Options；在一个 SQLite transaction 中计算该 Task **所有 resource account 的 remaining 总和 R**，把这些 account 的 remaining 全部置 0，并执行 `retired_wall_ms += R`；release repo binding；Task -> CLOSED。CLOSED terminal，不可 resume。Task close 后第 8.2 节 conservation equation 仍必须精确成立，retired resource 永远不可恢复或再次分配。
 
+### 32.1 Task 控制操作互斥（O5 R1b 裁决，2026-09-21）
+
+Core 必须按同一数据库身份和 Task ID 实施跨 CLI 进程生效的控制互斥锁。`task suspend/resume/close`、`option close`、具有对应 completion capability 的 `fulfilled` Claim，以及其他能够发起或解除该 Task 取消保护的外部入口，均使用所属 Task 的同一把锁。锁覆盖完整操作：取得锁后检查状态、请求取消、等待已有执行终止和结算、提交最终状态，最后释放锁。竞争请求直接返回 `BLOCKED`，不得隐式重试；内部共用步骤沿用调用方已经取得的锁，不重复获取。
+
+已有执行的终止、capture、settlement、释放 execution slot、取消监视和状态读取必须能在持锁期间继续进行，不得等待同一把控制锁。SQLite 只承担短事务，等待进程结束时不得持有 SQLite 写事务。控制锁只负责控制请求互斥；既有 execution slot 继续负责执行活动互斥。调度准入事务继续检查取消标记；取消保护存在期间不得启动该 Task 的新执行。普通信息 Claim 和资源提议不得改变取消保护。
+
+Suspend 最终事务必须再次确认该 Task 没有活跃 Attempt、outstanding lease 或占用的 execution slot；不满足时不得提交 SUSPENDED。最终状态变更与取消标记清除须在同一事务完成。统一状态校验必须拒绝已 SUSPENDED/CLOSED 但仍有上述执行活动、lease 或 slot 的 Task。
+
+解锁不等于清除取消标记。取消已提交后，错误返回或持锁进程退出不得解除调度保护；后续请求不得隐式接管残留取消状态。显式 `recover` 必须核对并处理残留状态，证明执行终止和结算后才能清除保护，且不得抢占仍存活的持锁控制请求。沿用既有包结构、依赖约束、外部协议和 Git 调用预算，不新增 semantic object 或通用锁框架。
+
 worker result 中若有 Task `fulfilled` Claim：只有 issuer actor 有 `task.complete` 时才触发同样的 qualifying close；否则只保存 informational Claim。
 
 ## 33. Option operations
@@ -1530,6 +1540,8 @@ Review tests：reviewer cannot change Artifact；reject creates fresh Attempt；
 Interrupt tests：worker 创建 child process 无限循环；interrupt 后验证 WSL distro terminated、child gone、Attempt terminal、Artifact captured、Option remains OPEN。
 
 Suspend/resume：T1 ACTIVE -> T1 suspend -> T2 bind same repo -> T2 close -> T1 resume；历史 created_against 不变化。
+
+R1b regression：确定性交错覆盖 suspend 与 `option close`、suspend 与 qualifying Option `fulfilled`，包括取消已提交、执行已结算但最终 lifecycle transaction 尚未提交的窗口；不得依赖随机 sleep。跨 CLI 进程竞争必须返回 `BLOCKED`；持锁等待不妨碍已有执行结算；取消后错误返回/异常退出保持保护，显式 recover 可恢复且不能抢占活控制请求。验证 SUSPENDED/CLOSED Task 无活跃 Attempt、outstanding lease 或占用 slot 的统一不变式，并保留原有回归和断言。
 
 Role-card tests：`scp_harness_role_card_v0.schema.json` valid fixtures 全通过；unknown context/capability/limit、wrong scope、duplicate capability name、missing `lease.wall_ms` 全拒绝；改变 `influence` 不得改变 v0 Core decision。
 

@@ -396,6 +396,11 @@ func Validate(s *model.State) error {
 	if active > 1 {
 		return bad("multiple active Attempts")
 	}
+	for id, t := range s.Tasks {
+		if t.Status != "ACTIVE" && !TaskQuiescent(s, id) {
+			return bad("inactive Task has active execution, outstanding lease or execution slot")
+		}
+	}
 	for _, c := range s.Claims {
 		if !Subject(s, c.TaskID, c.SubjectType, c.SubjectID) {
 			return bad("dangling Claim")
@@ -420,6 +425,25 @@ func Validate(s *model.State) error {
 		}
 	}
 	return nil
+}
+
+// TaskQuiescent includes protected-test leases and the between-step slot, not
+// just worker Attempts. Both final control transactions and validation use it.
+func TaskQuiescent(s *model.State, taskID string) bool {
+	if s.SlotTask == taskID {
+		return false
+	}
+	for _, a := range s.Attempts {
+		if a.TaskID == taskID && a.Active() {
+			return false
+		}
+	}
+	for _, l := range s.Leases {
+		if l.TaskID == taskID {
+			return false
+		}
+	}
+	return true
 }
 func Subject(s *model.State, task, kind, id string) bool {
 	switch kind {
