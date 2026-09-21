@@ -36,6 +36,17 @@ this distro. Authoritative repositories, SQLite and Artifact storage stay on Win
 The trust boundary assumes configured native worker software is trusted; model
 outputs and candidate code do not gain Core authority.
 
+Archive attributes are unsupported. Any `export-ignore` or `export-subst` text in
+an exact-SHA tracked `.gitattributes` blob (including comments, disabled rules and
+macros) rejects that snapshot as `REPOSITORY_UNAVAILABLE`. One bounded exact-tree
+Git grep performs this check; no attribute parser or per-path evaluation exists.
+Grep and archive use temporary Core-owned Git metadata referencing the original
+object directory. Original repository `info/attributes`, local/user/system Git
+configuration and ambient Git overrides are not used. Global/system attributes are
+disabled explicitly. A fixed private byte-preservation policy disables checkout
+conversion, so ordinary text/EOL rules cannot change the exported blob bytes.
+No repository content or worktree is cloned/copied to establish this environment.
+
 ## Configure and run
 
 Copy `scp.example.json` to a caller-selected config file and explicitly set
@@ -90,7 +101,7 @@ necessary; it never treats an unrecorded effect as successful.
 go test ./...
 go vet ./...
 .\scripts\build.ps1
-.\scripts\final-acceptance.ps1
+.\scripts\final-acceptance.ps1 -KnownNormativeFailures none
 ```
 
 The fixture executable is compiled from `testdata/workers/main.go` and installed
@@ -100,7 +111,10 @@ process termination, filesystem permissions and CAS. They fail on unsupported
 hosts; no WSL acceptance test silently skips. Do not run a production scheduler
 while these tests use the single dedicated worker distro.
 
-The final script records the exact source HEAD, build command, binary SHA-256,
-uncached test results and acceptance-case mapping under `.local/acceptance/`.
+Pass `none` only after reviewing normative conformance as well as tests; otherwise
+pass the remaining failures. The script records this explicit assessment and does
+not infer it from a green test run. It builds and tests the delivered executable,
+records the exact HEAD, build command, binary SHA-256, uncached test results and
+acceptance mapping under `.local/acceptance/<HEAD>/`, and submits for O5 review.
 `scp.exe` and this generated evidence are derived outputs. All production code,
 embedded helper/SQL sources, tests and scripts belong to the source commit.

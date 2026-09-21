@@ -418,7 +418,8 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 	if e := config.Strict(payload, &obj); e != nil {
 		return nil, model.Err("INVALID_JSON", "claim payload must be object: %v", e)
 	}
-	if typ == "fulfilled" && (kind == "TASK" && card.Has("task.complete") || kind == "OPTION" && card.Has("option.complete")) {
+	qualifying := typ == "fulfilled" && (kind == "TASK" && card.Has("task.complete") || kind == "OPTION" && card.Has("option.complete"))
+	if qualifying {
 		s, e := c.Read()
 		if e != nil {
 			return nil, e
@@ -450,7 +451,11 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 		if e != nil {
 			return e
 		}
-		delete(s.Cancellations, taskID)
+		// Informational and resource-proposal Claims do not own the lifecycle
+		// cancellation barrier. Only this request's qualifying close may release it.
+		if qualifying {
+			delete(s.Cancellations, taskID)
+		}
 		s.Touch(taskID)
 		return nil
 	})
@@ -522,8 +527,13 @@ func (c *Core) Lifecycle(ctx context.Context, id, action string) (*model.Task, e
 			return nil, e
 		}
 	}
+	return c.finishLifecycle(id, action, sha, identity)
+}
+
+// finishLifecycle is the final transaction after cancellation has settled.
+func (c *Core) finishLifecycle(id, action, sha, identity string) (*model.Task, error) {
 	var result *model.Task
-	e = c.Update(func(s *model.State) error {
+	e := c.Update(func(s *model.State) error {
 		t, e := task(s, id)
 		if e != nil {
 			return e
@@ -559,8 +569,8 @@ func (c *Core) Lifecycle(ctx context.Context, id, action string) (*model.Task, e
 	})
 	return result, e
 }
-func (c *Core) Cancel(ctx context.Context, taskID string) error {
-	e := c.Store.Update(func(s *model.State) error {
+func (c *Core) requestCancellation(taskID string) error {
+	return c.Store.Update(func(s *model.State) error {
 		if s.Tasks[taskID] == nil {
 			return model.Err("NOT_FOUND", "Task")
 		}
@@ -573,7 +583,9 @@ func (c *Core) Cancel(ctx context.Context, taskID string) error {
 		}
 		return nil
 	})
-	if e != nil {
+}
+func (c *Core) Cancel(ctx context.Context, taskID string) error {
+	if e := c.requestCancellation(taskID); e != nil {
 		return e
 	}
 	deadline := time.NewTimer(time.Duration(c.Config.Limits.ProcessMS) * time.Millisecond)

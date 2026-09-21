@@ -5,6 +5,8 @@ Date: 2026-09-20
 
 Normative amendment: 2026-09-21，O5 议会明确批准第 10.4 节 Claim 保留值及 resource.propose 双 capability 规则。
 
+Corrective rulings: 2026-09-21，O5 明确要求关闭 R1–R4，并为 R4 增加第 25/29 节的封闭 attribute inspection 规则与独立调用预算；修复后提交第二次独立审核。
+
 ## 0. Bootstrap implementation contract
 
 本文是 SCP Harness v0 的**封闭产品规格**，同时也是从空仓库开始的一次 autonomous bootstrap directive。
@@ -846,6 +848,18 @@ Resolve：`git -C <repo> rev-parse --verify <ref>^{commit}`，必须有 timeout/
 
 Export：`git -C <repo> archive --format=tar <exact-sha>`，流式读取，限制 maximum bytes 和 maximum duration。不得 clone，不得 checkout historical worktree。
 
+### 25.1 R4 archive attributes — O5 FINAL RULING
+
+本节取代所有此前 R4 Set / Unset / Unspecified / string-value 求值规则、typed ls-tree / check-attr 方案及其 inspection 预算。R4 的目标只有：exported snapshot 保持 authoritative exact SHA 的树内容，不能因 archive attributes 删除路径或替换内容。
+
+`export-ignore` 与 `export-subst` 是 unsupported repository feature。Exact SHA 内所有 tracked、basename 为 `.gitattributes` 的 blob 均在检查范围；其中出现任一保留标识符即以 `REPOSITORY_UNAVAILABLE` 拒绝。无需判断 comment、pattern 匹配、覆盖规则、否定、unspecified、显式 value 或 macro；这些都允许保守拒绝。不得增加 attribute parser、四态恢复逻辑、目录属性模拟器或兼容框架。
+
+检查必须绑定 exact SHA；不得用 mutable worktree/index 替代。R4 最多一个 `export_attr_inspection` Git subprocess，可用限定 exact tree 和 `.gitattributes` pathspec 的 `git grep`。Match 拒绝；明确的 clean no-match 才继续。Git failure、输出异常、超出边界、无法确定结果都必须 `REPOSITORY_UNAVAILABLE`，不运行 archive。
+
+Archive 的非 tree attribute 来源必须被隔离：不得使用 `--worktree-attributes`；`$GIT_DIR/info/attributes` 必须不存在、为空或由受控执行环境保证无法提供 archive attributes；global/system attributes 必须显式隔离/禁用。Core 不得依赖调用用户的 Git 配置来决定导出内容。无法建立隔离则 `REPOSITORY_UNAVAILABLE`。普通、不含两个标识符的 `.gitattributes` 以及没有 `.gitattributes` 的仓库不因 R4 被拒绝，原有 exact-content 与 no-op round-trip 保证继续有效。
+
+属性检查与 archive 均为 Core Git invocation，只能在 `internal/gitrepo` 构造并经 `internal/boundedexec` 执行；timeout、输入、输出均有界。不得 clone、checkout historical worktree、history traversal、增加额外 inspection subprocess 或新 repository abstraction。
+
 ## 26. Worker synthetic Git
 
 默认 worker 看不到 authoritative `.git`。workspace 必须来自 `git archive <exact SHA>` 或 continuation Artifact，不得复制 authoritative `.git`。
@@ -900,6 +914,7 @@ Git 调用次数 acceptance：
 
 ```text
 resolve_ref <= 1
+export_attr_inspection <= 1
 export_tree <= 1
 synthetic_git <= 4
 promotion <= 8
@@ -1503,6 +1518,8 @@ Infrastructure failure tests：
 Artifact tests：normal files、large files、file-count overflow、byte overflow、partial capture failure、atomic publication、unsupported special file。
 
 Git tests：创建 1/100/10000 commits、many branches 的 synthetic repositories；要求 SCP 的 Git call count 不随 history 长度增长；确认 git log / rev-list / blame 永远没有被调用。
+
+R4 regression：root/nested `.gitattributes` 中的 export-ignore / export-subst、取消/恢复 unspecified/显式 value、macro、comment 中的保留标识符均拒绝；无相关标识符或无 `.gitattributes` 的正常仓库通过。验证 mutable worktree/index、原仓库 info/attributes、global/system 属性或用户配置不能影响 archive；unchanged snapshot → promotion round-trip 不改变树内容；拒绝时不运行 archive；机械检查 `export_attr_inspection <= 1 && export_tree <= 1`。
 
 Synthetic worker Git test：authoritative repo 10000 commits，worker workspace 执行 git rev-list --count HEAD，结果必须为 1。
 

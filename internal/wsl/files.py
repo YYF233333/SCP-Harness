@@ -36,40 +36,51 @@ def scan(base, limits, exclude_git=False):
                     stack.append((entry.path, name + '/'))
 
 def discard(base, limits):
-    # Bounded, incremental deletion only within Core's exact transient root.
-    # Never follows symlinks; on an overflow the next invocation can finish
-    # the remainder without an unbounded traversal.
-    count = total = 0
-    stack = [(base, False)]
-    while stack:
-        filename, visited = stack.pop()
-        if visited:
-            os.rmdir(filename)
-            continue
-        if not os.path.lexists(filename):
-            continue
-        info = os.lstat(filename)
-        count += 1
-        total += info.st_size if stat.S_ISREG(info.st_mode) else 0
-        if count > limits['workspace_max_files'] or total > limits['workspace_max_bytes'] or len(os.path.relpath(filename, base).encode()) > limits['path_max_bytes']:
-            fail('transient cleanup bound exceeded')
-        if stat.S_ISDIR(info.st_mode):
-            stack.append((filename, True))
-            with os.scandir(filename) as entries:
-                for entry in entries:
-                    if len(stack) + count > limits['workspace_max_files']:
-                        fail('transient cleanup inventory bound exceeded')
-                    stack.append((entry.path, False))
-        else:
-            os.unlink(filename)
+    # Deletion is not workspace admission: neither file contents nor full paths
+    # need to fit capture limits. Each incomplete batch unlinks actual entries.
+    # Open relative to directory FDs so long paths do not prevent cleanup.
+    budget = limits['workspace_max_files']
+    if budget <= 0:
+        raise ValueError('non-positive cleanup work budget')
+    if not os.path.lexists(base):
+        return True
+    if not stat.S_ISDIR(os.lstat(base).st_mode):
+        os.unlink(base)  # Also unlinks a symlink without following its target.
+        return True
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(base, flags)
+    names = []
+    removed = 0
+    try:
+        while removed < budget:
+            with os.scandir(fd) as entries:
+                entry = next(entries, None)
+            if entry is None:
+                if not names:
+                    os.close(fd)
+                    fd = None
+                    os.rmdir(base)
+                    return True
+                parent = os.open('..', flags, dir_fd=fd)
+                os.close(fd)
+                fd = parent
+                os.rmdir(names.pop(), dir_fd=fd)
+                removed += 1
+            elif entry.is_dir(follow_symlinks=False):
+                child = os.open(entry.name, flags, dir_fd=fd)
+                os.close(fd)
+                fd = child
+                names.append(entry.name)
+            else:
+                os.unlink(entry.name, dir_fd=fd)
+                removed += 1
+        return False  # budget > 0 actual deletions; caller continues boundedly.
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 if op == 'prepare':
-    limits = json.loads(sys.argv[3])
-    # A new inode tree each time; only this dedicated transient directory is removed.
-    if os.path.lexists(root):
-        if os.path.islink(root):
-            fail('unexpected root symlink')
-        discard(root, limits)
+    # Runner must finish bounded cleanup before consuming the incoming bundle.
     os.mkdir(root, 0o755)
     with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as archive:
         for member in archive:
@@ -134,6 +145,7 @@ elif op == 'result':
 elif op == 'exists':
     print('yes' if os.path.isdir(root + '/workspace') else 'no')
 elif op == 'discard':
-    discard(root, json.loads(sys.argv[3]))
+    if not discard(root, json.loads(sys.argv[3])):
+        raise SystemExit(43)
 else:
     fail('unknown helper operation')

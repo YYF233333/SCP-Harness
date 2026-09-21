@@ -66,7 +66,7 @@ func TestHistoryIndependentBoundedGitAndCAS(t *testing.T) {
 			if e = g.Export(ctx, repo, sha, tree); e != nil {
 				t.Fatal(e)
 			}
-			if g.Calls["resolve_ref"] != 1 || g.Calls["export_tree"] != 1 {
+			if g.Calls["resolve_ref"] != 1 || g.Calls["export_attr_inspection"] != 1 || g.Calls["export_tree"] != 1 {
 				t.Fatalf("history-dependent Git calls %+v", g.Calls)
 			}
 			b, e := os.ReadFile(filepath.Join(tree, "README.md"))

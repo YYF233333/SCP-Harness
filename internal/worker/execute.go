@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -34,6 +35,17 @@ func Run(ctx context.Context, runner wsl.Runner, p config.Profile, lease int64) 
 	r, e := runner.Run(ctx, "scp", args, nil, nil, time.Duration(lease)*time.Millisecond, runner.Config.Limits.Stdout, runner.Config.Limits.Stderr)
 	out := Outcome{Process: r, Status: "RETURNED", StartedAt: start}
 	if e != nil {
+		if errors.Is(e, context.DeadlineExceeded) {
+			out.Status = "TIMED_OUT"
+			return out, nil
+		}
+		if errors.Is(e, context.Canceled) {
+			out.Status = "INTERRUPTED"
+			return out, nil
+		}
+		out.Status = "TERMINATED"
+		reason := "RUNNER_UNAVAILABLE"
+		out.Reason = &reason
 		return out, model.Err("RUNNER_UNAVAILABLE", "worker launch: %v", e)
 	}
 	if r.Canceled {

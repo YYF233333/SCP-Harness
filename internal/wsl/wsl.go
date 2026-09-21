@@ -3,6 +3,7 @@ package wsl
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"io"
 	"time"
 
@@ -49,6 +50,14 @@ func (r Runner) Terminate(ctx context.Context) error {
 	return nil
 }
 func (r Runner) Files(ctx context.Context, op string, args []string, in io.Reader, out io.Writer, maxout int64) error {
+	if op == "discard" {
+		return r.discard(ctx)
+	}
+	if op == "prepare" {
+		if e := r.discard(ctx); e != nil {
+			return e
+		}
+	}
 	argv := append([]string{"python3", "-c", fileHelper, op, r.Config.WSL.Root}, args...)
 	x, e := r.Control(ctx, argv, in, out, maxout)
 	if e != nil || x.TimedOut {
@@ -61,4 +70,30 @@ func (r Runner) Files(ctx context.Context, op string, args []string, in io.Reade
 		return model.Err("RUNNER_UNAVAILABLE", "runner file operation %s exit %d: %s", op, x.ExitCode, x.Stderr)
 	}
 	return nil
+}
+
+// One cleanup has a finite wall deadline. Each helper batch has a deletion-work
+// budget and returns 43 only after making progress; admission limits stay intact.
+func (r Runner) discard(ctx context.Context) error {
+	bounded, cancel := context.WithTimeout(ctx, time.Duration(r.Config.Limits.ProcessMS)*time.Millisecond)
+	defer cancel()
+	limits, e := json.Marshal(r.Config.Limits)
+	if e != nil {
+		return model.Err("CORE_INCONSISTENT", "cleanup limits: %v", e)
+	}
+	args := []string{"python3", "-c", fileHelper, "discard", r.Config.WSL.Root, string(limits)}
+	for {
+		x, e := r.Control(bounded, args, nil, nil, r.Config.Limits.Stdout)
+		if e != nil || x.TimedOut || x.Canceled || x.OutputExceeded {
+			return model.Err("RUNNER_UNAVAILABLE", "transient cleanup did not complete within its execution bounds: %v: %s", e, x.Stderr)
+		}
+		switch x.ExitCode {
+		case 0:
+			return nil
+		case 43:
+			continue
+		default:
+			return model.Err("RUNNER_UNAVAILABLE", "transient cleanup failed (exit %d): %s", x.ExitCode, x.Stderr)
+		}
+	}
 }

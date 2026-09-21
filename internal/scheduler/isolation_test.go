@@ -53,7 +53,7 @@ func Test10000CommitSyntheticHistoryAndActualInteropIsolation(t *testing.T) {
 	c.Config.Cards["operator"] = card
 	c.Git.Calls = map[string]int{}
 	step(t, engine)
-	if c.Git.Calls["resolve_ref"] > 1 || c.Git.Calls["export_tree"] != 1 || c.Git.Calls["synthetic_git"] > 4 {
+	if c.Git.Calls["resolve_ref"] > 1 || c.Git.Calls["export_attr_inspection"] != 1 || c.Git.Calls["export_tree"] != 1 || c.Git.Calls["synthetic_git"] > 4 {
 		t.Fatalf("startup Git calls %+v", c.Git.Calls)
 	}
 	s := state(t, c)

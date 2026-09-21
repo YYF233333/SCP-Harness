@@ -1,59 +1,92 @@
 package artifact
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"scp-harness/internal/config"
 	"scp-harness/internal/model"
 )
 
-// Discard removes a caller-selected Core-owned disposable tree. It validates a
-// bounded inventory first and rejects links/reparse entries before any delete.
+// Discard is only for Core-owned transient trees. It never reads file contents
+// or follows links. Admission limits still apply to Pack/Extract, not to unlink.
+// A batch bounds completed deletions; the whole operation has a finite deadline.
 func Discard(root string, l config.Limits) error {
-	if _, e := os.Lstat(root); os.IsNotExist(e) {
-		return nil
-	} else if e != nil {
-		return StorageError("temporary tree stat", e)
+	if l.Files <= 0 || l.ProcessMS <= 0 {
+		return model.Err("CORE_INCONSISTENT", "invalid cleanup execution bounds")
 	}
-	paths := []string{}
-	var total int64
-	e := filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return model.Err("CORE_INCONSISTENT", "temporary tree contains link")
-		}
-		info, e := d.Info()
-		if e != nil {
-			return e
-		}
-		rel, e := filepath.Rel(root, p)
-		if e != nil {
-			return e
-		}
-		if int64(len(paths)) >= l.Files || int64(len(rel)) > l.Path {
-			return model.Err("LIMIT_EXCEEDED", "temporary inventory bound")
-		}
-		if info.Mode().IsRegular() {
-			if info.Size() > l.Single || info.Size() > l.Bytes-total {
-				return model.Err("LIMIT_EXCEEDED", "temporary byte bound")
-			}
-			total += info.Size()
-		} else if !d.IsDir() {
-			return model.Err("CORE_INCONSISTENT", "temporary special file")
-		}
-		paths = append(paths, p)
-		return nil
-	})
+	absolute, e := filepath.Abs(root)
 	if e != nil {
-		return StorageError("temporary inventory", e)
+		return StorageError("temporary cleanup path", e)
 	}
-	for i := len(paths) - 1; i >= 0; i-- {
-		if e = os.Remove(paths[i]); e != nil {
+	deadline := time.Now().Add(time.Duration(l.ProcessMS) * time.Millisecond)
+	for {
+		done, e := discardBatch(absolute, l.Files, deadline)
+		if e != nil {
 			return StorageError("temporary cleanup", e)
 		}
+		if done {
+			return nil
+		}
 	}
-	return nil
+}
+
+func discardBatch(root string, budget int64, deadline time.Time) (bool, error) {
+	current := root
+	var removed int64
+	for removed < budget {
+		if !time.Now().Before(deadline) {
+			return false, model.Err("LIMIT_EXCEEDED", "transient cleanup deadline exceeded; completed deletions are retained")
+		}
+		info, e := os.Lstat(current)
+		if os.IsNotExist(e) {
+			if current == root {
+				return true, nil
+			}
+			current = filepath.Dir(current)
+			continue
+		}
+		if e != nil {
+			return false, e
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			if e = os.Remove(current); e != nil {
+				return false, e
+			}
+			removed++
+			if current == root {
+				return true, nil
+			}
+			current = filepath.Dir(current)
+			continue
+		}
+		directory, e := os.Open(current)
+		if e != nil {
+			return false, e
+		}
+		entries, e := directory.ReadDir(1)
+		closeErr := directory.Close()
+		if e != nil && e != io.EOF {
+			return false, e
+		}
+		if closeErr != nil {
+			return false, closeErr
+		}
+		if len(entries) == 0 {
+			if e = os.Remove(current); e != nil {
+				return false, e
+			}
+			removed++
+			if current == root {
+				return true, nil
+			}
+			current = filepath.Dir(current)
+		} else {
+			// ReadDir(1) keeps enumeration bounded even for an overfull directory.
+			current = filepath.Join(current, entries[0].Name())
+		}
+	}
+	return false, nil
 }

@@ -31,7 +31,7 @@ func (g *Git) invoke(ctx context.Context, category string, args, env []string, i
 	}
 	g.Calls[category]++
 	slog.Debug("Core Git invocation", "category", category, "argv", args)
-	r, e := boundedexec.Run(ctx, boundedexec.Command{Argv: args, Env: env, Stdin: in, StdoutSink: out, Timeout: time.Duration(g.Config.Limits.ProcessMS) * time.Millisecond, MaxStdout: cap, MaxStderr: g.Config.Limits.Stderr})
+	r, e := boundedexec.Run(ctx, boundedexec.Command{Argv: args, Env: env, ReplaceEnv: category == "export_tree" || category == "export_attr_inspection", Stdin: in, StdoutSink: out, Timeout: time.Duration(g.Config.Limits.ProcessMS) * time.Millisecond, MaxStdout: cap, MaxStderr: g.Config.Limits.Stderr})
 	if e != nil || r.TimedOut || r.Canceled {
 		return r, model.Err("REPOSITORY_UNAVAILABLE", "Git mechanism: %v: %s", e, r.Stderr)
 	}
@@ -66,9 +66,23 @@ func (g *Git) resolve(ctx context.Context, repo, ref, category string) (string, 
 func (g *Git) Export(ctx context.Context, repo, sha, root string) error {
 	return g.Snapshot(ctx, repo, sha, root, "")
 }
-func (g *Git) Snapshot(ctx context.Context, repo, sha, root, keep string) error {
+func (g *Git) Snapshot(ctx context.Context, repo, sha, root, keep string) (result error) {
 	if !shaPattern.MatchString(sha) {
 		return model.Err("CORE_INCONSISTENT", "invalid exact snapshot SHA")
+	}
+	env, metadata, e := g.archiveEnvironment(repo, filepath.Dir(root))
+	if metadata != "" {
+		defer func() {
+			if cleanup := artifact.Discard(metadata, g.Config.Limits); cleanup != nil && result == nil {
+				result = model.Err("REPOSITORY_UNAVAILABLE", "archive environment cleanup: %v", cleanup)
+			}
+		}()
+	}
+	if e != nil {
+		return e
+	}
+	if e = g.inspectArchiveAttributes(ctx, repo, sha, env); e != nil {
+		return e
 	}
 	f, e := os.CreateTemp(filepath.Dir(root), "export-*.tar")
 	if e != nil {
@@ -76,7 +90,7 @@ func (g *Git) Snapshot(ctx context.Context, repo, sha, root, keep string) error 
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	r, e := g.invoke(ctx, "export_tree", argv(repo, "archive", "--format=tar", sha), nil, nil, f, g.Config.Limits.Export)
+	r, e := g.invoke(ctx, "export_tree", archiveArgs(repo, "archive", "--format=tar", sha), env, nil, f, g.Config.Limits.Export)
 	if e != nil {
 		return e
 	}

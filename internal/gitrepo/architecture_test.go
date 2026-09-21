@@ -26,6 +26,7 @@ func TestArchitectureConstraints(t *testing.T) {
 		}
 	}
 	forbidden := []string{"rev-list", "blame", "bisect", "reflog", "merge-base", "--contains", "fsck", "repack", "fetch", "pull"}
+	attributeInvocations := 0
 	e = filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e
@@ -56,6 +57,19 @@ func TestArchitectureConstraints(t *testing.T) {
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
+			case *ast.CallExpr:
+				if rel == "internal/gitrepo/attributes.go" {
+					if selector, ok := n.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "invoke" {
+						attributeInvocations++
+						if len(n.Args) < 2 {
+							t.Fatal("attribute inspection missing category")
+						}
+						category, ok := n.Args[1].(*ast.BasicLit)
+						if !ok || category.Value != `"export_attr_inspection"` {
+							t.Fatal("attribute inspection hidden outside its budget")
+						}
+					}
+				}
 			case *ast.BasicLit:
 				if n.Kind == token.STRING {
 					v, _ := strconv.Unquote(n.Value)
@@ -63,6 +77,9 @@ func TestArchitectureConstraints(t *testing.T) {
 						t.Errorf("Git construction outside gitrepo: %s", rel)
 					}
 					if strings.HasPrefix(rel, "internal/gitrepo/") {
+						if v == "check-attr" || v == "ls-tree" {
+							t.Errorf("superseded R4 attribute evaluation command: %s", v)
+						}
 						for _, bad := range forbidden {
 							if v == bad {
 								t.Errorf("forbidden Core Git argv %s", bad)
@@ -88,6 +105,9 @@ func TestArchitectureConstraints(t *testing.T) {
 	})
 	if e != nil {
 		t.Fatal(e)
+	}
+	if attributeInvocations != 1 {
+		t.Fatalf("R4 must have one bounded attribute inspection invocation, got %d", attributeInvocations)
 	}
 	mod, e := os.ReadFile(filepath.Join(root, "go.mod"))
 	if e != nil {

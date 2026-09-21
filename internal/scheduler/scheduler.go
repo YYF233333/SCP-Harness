@@ -296,6 +296,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 			out, e = worker.Run(active, c.Runner, profile, remaining)
 		}
 	}
+	launchFailure := e != nil && out.Reason != nil && *out.Reason == "RUNNER_UNAVAILABLE"
 	// Distro termination is unconditional even on normal worker return: children
 	// cannot continue writing while Core captures or reviews the submitted state.
 	terminateErr := c.Runner.Terminate(context.Background())
@@ -307,15 +308,19 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 	if e != nil {
 		reason = model.Code(e)
 	}
-	if out.Reason != nil {
+	if out.Reason != nil && e == nil {
 		reason = *out.Reason
 		e = model.Err(reason, "worker profile %s returned unavailable exit code %d", profile.ID, out.Process.ExitCode)
 	}
-	if active.Err() == context.DeadlineExceeded && model.Exit(model.Code(e)) < 5 {
+	if e != nil && model.Exit(model.Code(e)) >= 4 {
+		status = "TERMINATED"
+		reason = model.Code(e)
+	}
+	if !launchFailure && active.Err() == context.DeadlineExceeded && model.Exit(model.Code(e)) < 5 {
 		status = "TIMED_OUT"
 		reason = ""
 		e = nil
-	} else if monitor.Err() != nil && model.Exit(model.Code(e)) < 5 {
+	} else if !launchFailure && monitor.Err() != nil && model.Exit(model.Code(e)) < 5 {
 		status = "INTERRUPTED"
 		reason = ""
 		e = nil
@@ -333,7 +338,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 				e = terminateErr
 				status = "TERMINATED"
 				reason = model.Code(e)
-			} else {
+			} else if e == nil {
 				reason = model.Code(terminateErr)
 			}
 		}
@@ -432,10 +437,12 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 	if term != nil {
 		e = term
 	}
+	var cleanupErr error
 	if term == nil {
 		bounds, _ := json.Marshal(c.Config.Limits)
-		if de := c.Runner.Files(context.Background(), "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout); de != nil && model.Code(de) != "LIMIT_EXCEEDED" {
-			e = de
+		cleanupErr = c.Runner.Files(context.Background(), "discard", []string{string(bounds)}, nil, nil, c.Config.Limits.Stdout)
+		if cleanupErr != nil {
+			e = cleanupErr
 		}
 	}
 	outcome := "FAIL"
@@ -445,7 +452,7 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 	if e == nil && r.Started && r.ExitCode == 0 && !r.TimedOut && !r.Canceled {
 		outcome = "PASS"
 	}
-	if active.Err() == context.DeadlineExceeded && term == nil && model.Exit(model.Code(e)) < 5 {
+	if active.Err() == context.DeadlineExceeded && term == nil && cleanupErr == nil && model.Exit(model.Code(e)) < 5 {
 		e = nil
 		outcome = "TIMEOUT"
 	}

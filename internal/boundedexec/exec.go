@@ -12,9 +12,11 @@ import (
 )
 
 type Command struct {
-	Argv                 []string
-	Dir                  string
-	Env                  []string
+	Argv []string
+	Dir  string
+	Env  []string
+	// ReplaceEnv is used for archive isolation; other commands inherit the host.
+	ReplaceEnv           bool
 	Stdin                io.Reader
 	Timeout              time.Duration
 	MaxStdout, MaxStderr int64
@@ -65,6 +67,9 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	cmd := exec.CommandContext(timed, c.Argv[0], c.Argv[1:]...)
 	cmd.Dir = c.Dir
 	cmd.Env = append(os.Environ(), c.Env...)
+	if c.ReplaceEnv {
+		cmd.Env = c.Env
+	}
 	cmd.Stdin = c.Stdin
 	var out, errout bytes.Buffer
 	sink := c.StdoutSink
