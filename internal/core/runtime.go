@@ -35,11 +35,14 @@ func (c *Core) runnable(s *model.State, p *model.Step) bool {
 	if p.OptionID != "" && (s.Options[p.OptionID] == nil || s.Options[p.OptionID].Status != "OPEN") {
 		return false
 	}
-	profile := ""
-	if p.Operation != "protected_test" && p.Operation != "promotion" {
+	profile, runner := "", ""
+	if p.Operation == "protected_test" {
+		runner = c.Config.WSL.TestDistro
+	} else if p.Operation != "promotion" {
 		profile = c.Config.Profile(p.Operation).ID
+		runner = c.Config.WSL.Distro
 	}
-	if s.Blocked(p.TaskID, profile) {
+	if s.Blocked(p.TaskID, profile, runner) {
 		return false
 	}
 	anchor, e := c.Anchor(s, p)
@@ -328,7 +331,7 @@ func (c *Core) Complete(v Completion) error {
 			delete(s.Interrupts, a.ID)
 		}
 		if a.Status == "TERMINATED" && model.Exit(v.Reason) >= 4 {
-			if e := c.block(s, v.Reason, a.TaskID, a.Profile, "Attempt "+a.ID+": "+v.Reason); e != nil {
+			if e := c.block(s, v.Reason, a.TaskID, a.Profile, c.Config.WSL.Distro, "Attempt "+a.ID+": "+v.Reason); e != nil {
 				return e
 			}
 			release(s)

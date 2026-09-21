@@ -158,7 +158,7 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = c.Block("WORKER_UNAVAILABLE", taskID, "operator", "fixture diagnostic"); e != nil {
+	if e = c.Block("WORKER_UNAVAILABLE", taskID, "operator", "", "fixture diagnostic"); e != nil {
 		t.Fatal(e)
 	}
 	s, e := c.Read()

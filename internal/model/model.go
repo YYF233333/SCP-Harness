@@ -191,12 +191,12 @@ func (s *State) Touch(task string) {
 		t.Updated = Now()
 	}
 }
-func (s *State) Blocked(task, profile string) bool {
+func (s *State) Blocked(task, profile, runner string) bool {
 	for _, b := range s.Blockers {
 		if b.Resolved != nil {
 			continue
 		}
-		if b.Scope == "GLOBAL" || b.Scope == "RUNNER" || b.Subject != nil && (b.Scope == "TASK" && *b.Subject == task || b.Scope == "WORKER_PROFILE" && *b.Subject == profile) {
+		if b.Scope == "GLOBAL" || b.Subject != nil && (b.Scope == "RUNNER" && *b.Subject == runner || b.Scope == "TASK" && *b.Subject == task || b.Scope == "WORKER_PROFILE" && *b.Subject == profile) {
 			return true
 		}
 	}

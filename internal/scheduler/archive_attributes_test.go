@@ -57,7 +57,7 @@ func TestR4UnavailableSnapshotHasNoCandidateEffects(t *testing.T) {
 	if c.Git.Calls["export_attr_inspection"] != 1 || c.Git.Calls["export_tree"] != 0 || c.Git.Calls["synthetic_git"] != 0 {
 		t.Fatalf("rejected input crossed archive boundary: %+v", c.Git.Calls)
 	}
-	if !s.Blocked(task.ID, "operator") || s.Slot.State != "IDLE" || s.Tasks[task.ID].Resources.Outstanding != 0 {
+	if !s.Blocked(task.ID, "operator", c.Config.WSL.Distro) || s.Slot.State != "IDLE" || s.Tasks[task.ID].Resources.Outstanding != 0 {
 		t.Fatal("rejection did not settle and block Task")
 	}
 }

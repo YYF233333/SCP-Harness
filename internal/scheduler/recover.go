@@ -78,11 +78,11 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 	}
 	defer c.Release(s.Owner)
 	if e = c.Runner.Terminate(ctx); e != nil {
-		_ = c.Block("RUNNER_UNAVAILABLE", "", "", e.Error())
+		_ = c.Block("RUNNER_UNAVAILABLE", "", "", c.Config.WSL.Distro, e.Error())
 		return result, e
 	}
 	if e = c.TestRunner.Terminate(ctx); e != nil {
-		_ = c.Block("RUNNER_UNAVAILABLE", "", "", e.Error())
+		_ = c.Block("RUNNER_UNAVAILABLE", "", "", c.Config.WSL.TestDistro, e.Error())
 		return result, e
 	}
 	for _, a := range state.Attempts {
@@ -172,7 +172,7 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		t := state.Tasks[j.TaskID]
 		sha, e := c.Git.Resolve(ctx, t.RepoPath, j.Ref)
 		if e != nil {
-			_ = c.Block(model.Code(e), t.ID, "", e.Error())
+			_ = c.Block(model.Code(e), t.ID, "", "", e.Error())
 			return result, e
 		}
 		outcome := "CONFLICT"

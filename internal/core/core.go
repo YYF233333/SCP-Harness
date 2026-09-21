@@ -678,10 +678,10 @@ func (c *Core) Interrupt(ctx context.Context, id string) (*model.Attempt, error)
 		}
 	}
 }
-func (c *Core) Block(kind, taskID, profile, message string) error {
-	return c.Store.Update(func(s *model.State) error { return c.block(s, kind, taskID, profile, message) })
+func (c *Core) Block(kind, taskID, profile, runner, message string) error {
+	return c.Store.Update(func(s *model.State) error { return c.block(s, kind, taskID, profile, runner, message) })
 }
-func (c *Core) block(s *model.State, kind, taskID, profile, message string) error {
+func (c *Core) block(s *model.State, kind, taskID, profile, runner, message string) error {
 	scope := "GLOBAL"
 	var subject *string
 	switch kind {
@@ -690,8 +690,7 @@ func (c *Core) block(s *model.State, kind, taskID, profile, message string) erro
 		subject = &profile
 	case "RUNNER_UNAVAILABLE":
 		scope = "RUNNER"
-		v := c.Config.WSL.Distro
-		subject = &v
+		subject = &runner
 	case "REPOSITORY_UNAVAILABLE":
 		scope = "TASK"
 		subject = &taskID

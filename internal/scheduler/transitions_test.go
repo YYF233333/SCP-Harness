@@ -121,11 +121,35 @@ func TestBlockedPendingTestResumesAndResourcePauseKeepsTarget(t *testing.T) {
 	if s.Pending[task.ID].TargetID != a.ID || s.Pending[task.ID].Operation != "protected_test" || s.Slot.State != "IDLE" {
 		t.Fatal("lost blocked test target")
 	}
+	if len(s.Blockers) != 1 {
+		t.Fatal("expected one protected runner blocker")
+	}
+	for _, b := range s.Blockers {
+		if b.Kind != "RUNNER_UNAVAILABLE" || b.Scope != "RUNNER" || b.Subject == nil || *b.Subject != c.Config.WSL.TestDistro {
+			t.Fatalf("protected runner blocker has wrong identity: %+v", b)
+		}
+	}
 	ran, e := engine.Step(context.Background())
 	if e != nil || ran {
 		t.Fatal("automatic blocker retry")
 	}
+	// A different Task can still explore on the healthy worker distro.
+	repo := t.TempDir()
+	fixtureGit(t, repo, "init", "-b", "main")
+	fixtureGit(t, repo, "-c", "user.name=fixture", "-c", "user.email=fixture@local", "commit", "--allow-empty", "-m", "base")
+	other, e := c.CreateTask(context.Background(), "independent worker exploration", repo, "refs/heads/main", c.Operator().ID, 60000)
+	if e != nil {
+		t.Fatal(e)
+	}
+	step(t, engine)
+	s = state(t, c)
+	if !s.Exploration[other.ID].Done || s.Pending[task.ID].Operation != "protected_test" || s.Pending[task.ID].TargetID != a.ID || len(s.Tests) != 0 {
+		t.Fatal("runner blocker affected the independent Task or retried the protected test")
+	}
 	c.Config.Test.Command = []string{fixtureWorker(t), "protected-test"}
+	if ran, e = engine.Step(context.Background()); e != nil || ran {
+		t.Fatal("repaired runner retried before explicit resolve")
+	}
 	for _, b := range s.Blockers {
 		if _, e = c.ResolveBlocker(b.ID); e != nil {
 			t.Fatal(e)
@@ -230,7 +254,7 @@ func TestPersistentInfrastructureAndFailStop(t *testing.T) {
 			t.Fatalf("runner mechanism failure: %v", e)
 		}
 		s := state(t, engine.Core)
-		if s.Pending[task.ID].Operation != "protected_test" || !s.Blocked(task.ID, "") {
+		if s.Pending[task.ID].Operation != "protected_test" || !s.Blocked(task.ID, "", engine.Core.Config.WSL.TestDistro) {
 			t.Fatal("runner blocker")
 		}
 	})

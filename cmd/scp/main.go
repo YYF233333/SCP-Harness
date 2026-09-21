@@ -92,7 +92,7 @@ func run(args []string, out, errout io.Writer) (exit int) {
 	defer stop()
 	data, e := execute(ctx, c, command, args)
 	if model.Exit(model.Code(e)) == 5 {
-		_ = c.Block(model.Code(e), "", "", e.Error())
+		_ = c.Block(model.Code(e), "", "", "", e.Error())
 	}
 	return emit(data, e)
 }

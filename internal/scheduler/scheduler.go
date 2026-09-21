@@ -74,7 +74,7 @@ func (s *Scheduler) Run(ctx context.Context) (string, error) {
 		if e != nil {
 			code := model.Code(e)
 			if model.Exit(code) == 5 {
-				blockErr := s.Core.Block(code, "", "", e.Error())
+				blockErr := s.Core.Block(code, "", "", "", e.Error())
 				slog.Error("global fail-stop", "error", e)
 				// If the blocker itself cannot be persisted, keep run.lock so
 				// a later process cannot resume implicitly after storage returns.
@@ -116,11 +116,14 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 	if e != nil {
 		code := model.Code(e)
 		if code == "WORKER_UNAVAILABLE" || code == "RUNNER_UNAVAILABLE" || code == "REPOSITORY_UNAVAILABLE" || code == "STORAGE_FAILURE" || code == "CORE_INCONSISTENT" {
-			profile := ""
-			if p.Operation != "protected_test" && p.Operation != "promotion" {
+			profile, runner := "", ""
+			if p.Operation == "protected_test" {
+				runner = s.Core.Config.WSL.TestDistro
+			} else if p.Operation != "promotion" {
 				profile = s.Core.Config.Profile(p.Operation).ID
+				runner = s.Core.Config.WSL.Distro
 			}
-			if be := s.Core.Block(code, p.TaskID, profile, e.Error()); be != nil {
+			if be := s.Core.Block(code, p.TaskID, profile, runner, e.Error()); be != nil {
 				return true, be
 			}
 		}
