@@ -335,7 +335,7 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 			return blockers[i].Created < blockers[j].Created
 		})
 		changes := []*model.Change{}
-		attention := []*model.Change{}
+		attention := []map[string]any{}
 		queued := 0
 		var activeChange *model.Change
 		for _, ch := range s.Changes {
@@ -344,7 +344,7 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 				queued++
 			}
 			if ch.State == "PAUSED" || ch.State == "BLOCKED" || ch.State == "STALE" {
-				attention = append(attention, ch)
+				attention = append(attention, map[string]any{"change": ch, "artifact": s.Artifacts[ch.ArtifactID], "ci_run": s.CIRuns[ch.CIRunID]})
 			}
 			if ch.State == "RUNNING" {
 				activeChange = ch
@@ -354,8 +354,12 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		if s.Slot.Owner != nil {
 			if a := s.Attempts[*s.Slot.Owner]; a != nil {
 				activity = a
+				activeChange = s.Changes[a.ChangeID]
 			} else {
 				activity = s.CIRuns[*s.Slot.Owner]
+				if r := s.CIRuns[*s.Slot.Owner]; r != nil {
+					activeChange = s.Changes[r.ChangeID]
+				}
 			}
 		} else if s.Slot.State == "BUSY" {
 			activity = map[string]string{"kind": s.Slot.Kind}
