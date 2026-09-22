@@ -264,6 +264,14 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 	active, cancel := context.WithTimeout(monitor, time.Duration(a.Lease)*time.Millisecond)
 	defer cancel()
 	dir, e := s.temp(a.ID)
+	var stdoutFile, stderrFile *os.File
+	if e == nil {
+		stdoutFile, stderrFile, e = worker.OpenLogs(a.Stdout, a.Stderr)
+		if e == nil {
+			defer stdoutFile.Close()
+			defer stderrFile.Close()
+		}
+	}
 	var visible map[string]bool
 	prepared := false
 	if e == nil {
@@ -289,10 +297,6 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 	}
 	out := worker.Outcome{Status: "TERMINATED"}
 	out.Process.ExitCode = -1
-	var stdoutFile, stderrFile *os.File
-	if e == nil {
-		stdoutFile, stderrFile, e = worker.OpenLogs(a.Stdout, a.Stderr)
-	}
 	if e == nil {
 		e = c.MarkRunning(a.ID)
 	}

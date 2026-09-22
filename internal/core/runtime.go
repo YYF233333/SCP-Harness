@@ -211,7 +211,7 @@ func (c *Core) PrepareAttempt(p model.Step, owner string) (*model.Attempt, error
 		}
 		id := model.ID()
 		out = &model.Attempt{ID: id, TaskID: t.ID, Operation: p.Operation, TargetType: p.TargetType, TargetID: p.TargetID, Actor: card.ID, Profile: profile.ID, AnchorType: kind, AnchorID: anchor, Lease: lease, SHA: t.SHA, Revision: t.Revision, Started: model.Now(), Status: "PREPARING"}
-		logs := filepath.Join(filepath.Dir(c.Config.Database), "runtime", id, "logs")
+		logs := filepath.Join(filepath.Dir(c.Config.Database), "runtime", id+".logs")
 		out.Stdout, out.Stderr = filepath.Join(logs, "stdout.log"), filepath.Join(logs, "stderr.log")
 		if e = ledger.Reserve(s, id, anchor, lease); e != nil {
 			return e

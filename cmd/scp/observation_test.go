@@ -333,7 +333,20 @@ print(h.hexdigest())`, c.Runner.Root() + "/workspace"}, nil, nil, 4096)
 }
 
 func TestObservationInterruptedLogs(t *testing.T) {
+	testObservationStoppedLogs(t, "INTERRUPTED")
+}
+
+func TestObservationTimedOutLogs(t *testing.T) {
+	testObservationStoppedLogs(t, "TIMED_OUT")
+}
+
+func testObservationStoppedLogs(t *testing.T, status string) {
 	c, _, _, _ := observationFixture(t, observationWorker)
+	if status == "TIMED_OUT" {
+		// Unlike the original three-second preparation/timeout boundary test,
+		// this case must first witness bytes from an actually running process.
+		c.Config.Workers[0].Timeout = 15000
+	}
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -360,11 +373,20 @@ func TestObservationInterruptedLogs(t *testing.T) {
 		}
 		return false
 	})
-	_, e := c.Interrupt(context.Background(), id)
-	if e != nil {
-		t.Fatal(e)
+	s, e := c.Store.Read()
+	if e != nil || s.Attempts[id].Status != "RUNNING" {
+		t.Fatal("output was not live before stop", e)
 	}
-	e = <-done
+	if status == "INTERRUPTED" {
+		if _, e = c.Interrupt(context.Background(), id); e != nil {
+			t.Fatal(e)
+		}
+	}
+	select {
+	case e = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("worker did not stop")
+	}
 	joined = true
 	if e != nil {
 		t.Fatal(e)
@@ -373,10 +395,10 @@ func TestObservationInterruptedLogs(t *testing.T) {
 	if e = c.WatchAttempt(context.Background(), id, &out); e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(out.String(), "INTERRUPTED") || !strings.Contains(out.String(), "[stdout] A\n") || !strings.Contains(out.String(), "[stderr] err A\n") {
+	if !strings.Contains(out.String(), status) || !strings.Contains(out.String(), "[stdout] A\n") || !strings.Contains(out.String(), "[stderr] err A\n") {
 		t.Fatal(out.String())
 	}
-	t.Log("O3: INTERRUPTED retains live stdout/stderr")
+	t.Logf("O3: %s retains stdout/stderr already observed while RUNNING", status)
 }
 
 func TestObservationContinuationBase(t *testing.T) {

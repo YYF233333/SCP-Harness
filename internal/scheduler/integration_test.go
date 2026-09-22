@@ -490,7 +490,7 @@ func testRealWorkerLifecycle(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				if tc.mode == "success-worker" || tc.mode == "crash-worker" || tc.mode == "timeout-worker" {
+				if tc.mode == "success-worker" || tc.mode == "crash-worker" {
 					if !strings.Contains(string(data), "before ") {
 						t.Fatalf("durable %s log missing: %s", tc.status, p)
 					}
