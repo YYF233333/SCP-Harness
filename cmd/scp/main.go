@@ -275,7 +275,7 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		if e != nil {
 			return nil, e
 		}
-		return map[string]any{"config_path": c.Config.Path, "disk_config_hash": c.Config.DiskHash, "scheduler_effective_config_hash": s.SchedulerConfigHash, "scheduler_started_at": s.SchedulerStarted, "restart_required": s.SchedulerConfigHash != "" && (s.SchedulerConfigHash != c.Config.Hash() || s.SchedulerDiskHash != c.Config.DiskHash)}, nil
+		return map[string]any{"config_path": c.Config.Path, "disk_config_hash": c.Config.Hash(), "disk_file_hash": c.Config.DiskHash, "scheduler_disk_file_hash": s.SchedulerDiskHash, "scheduler_effective_config_hash": s.SchedulerConfigHash, "scheduler_started_at": s.SchedulerStarted, "restart_required": s.SchedulerConfigHash != "" && (s.SchedulerConfigHash != c.Config.Hash() || s.SchedulerDiskHash != c.Config.DiskHash)}, nil
 	}
 	positional := map[string]bool{"task.revise": true, "task.extend": true, "task.suspend": true, "task.resume": true, "task.close": true, "task.show": true, "option.show": true, "option.release": true, "option.comment": true, "option.discuss": true, "option.thread": true, "option.refine": true, "option.split": true, "option.allocate": true, "option.close": true, "attempt.show": true, "attempt.interrupt": true, "artifact.show": true, "artifact.export": true, "blocker.resolve": true}
 	f, id, args, e := flags(command, args, positional[command])

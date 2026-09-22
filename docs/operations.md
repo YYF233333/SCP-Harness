@@ -176,7 +176,7 @@ Task root must retain 1200000ms after downward allocation; Task-level consumptio
 
 `task revise TASK_ID --objective TEXT` retains revision history and affects new Changes. All entity IDs accept unique prefixes; multiple matches fail AMBIGUOUS_ID. `scph --help`, `scph help` and group `--help` work without config/database. Invalid command arguments fail before storage access. Watches reject --json.
 
-`config show` reports config_path, disk_config_hash, scheduler_effective_config_hash, scheduler_started_at and restart_required. Scheduler freezes configuration at startup; editing disk does not change active or subsequent activities in that process. Stop and restart to adopt new settings; Changes retain their position. Each CIRun records the actual effective values.
+`config show` reports config_path, disk_config_hash, scheduler_effective_config_hash, scheduler_started_at and restart_required. Scheduler freezes configuration at startup; editing disk does not change active or subsequent activities in that process. Stop and restart to adopt new settings; Changes retain their position. Each CIRun records the actual effective values. Disk/effective config hashes use the same canonical configuration plus role-card contents; raw file hashes are shown separately for exact file provenance.
 
 ## Observe a live Attempt
 

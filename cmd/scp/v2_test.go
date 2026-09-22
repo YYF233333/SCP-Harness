@@ -104,7 +104,16 @@ func TestV2ShortIDsAndConfigShow(t *testing.T) {
 	if !strings.Contains(call(3, "task", "show", "abcdef"), "AMBIGUOUS_ID") {
 		t.Fatal("ambiguous prefix selected a Task")
 	}
-	if !strings.Contains(call(0, "config", "show"), `"restart_required":false`) {
+	unchanged := call(0, "config", "show")
+	var configView map[string]any
+	if e = json.Unmarshal([]byte(unchanged), &configView); e != nil {
+		t.Fatal(e)
+	}
+	hashes := configView["data"].(map[string]any)
+	if hashes["disk_config_hash"] != hashes["scheduler_effective_config_hash"] {
+		t.Fatal("unchanged configuration hashes cannot be compared", hashes)
+	}
+	if !strings.Contains(unchanged, `"restart_required":false`) {
 		t.Fatal("unchanged config mismatch")
 	}
 	cfg.Test.Timeout /= 2
