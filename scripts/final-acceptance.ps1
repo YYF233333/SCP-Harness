@@ -3,18 +3,16 @@ $ErrorActionPreference = 'Stop'
 $previousAcceptanceExe = $env:SCP_ACCEPTANCE_EXE
 $previousCodexEvidence = $env:SCP_CODEX_EVIDENCE
 function Test-DirtySource {
-    # Existing untracked report bundles are not executable or normative inputs.
-    # Tracked edits and every other untracked file still fail source admission.
     $changes = @(git status --porcelain --untracked-files=all)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source status' }
-    return @($changes | Where-Object { $_ -notmatch '^\?\? docs/reports/(.*\.(md|zip|sha256)|.*/\.gitattributes)$' }).Count -ne 0
+    return $changes.Count -ne 0
 }
 Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     $sourceHead = (git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'Source HEAD unavailable' }
     if (Test-DirtySource) { throw 'Commit the reviewed source before release acceptance; working tree must be clean.' }
-    if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal scheduler before Windows release acceptance.' }
+    if (Get-Process -Name scp, scph -ErrorAction SilentlyContinue) { throw 'Stop the normal scheduler before Windows release acceptance.' }
     $osInfo = Get-CimInstance Win32_OperatingSystem
     if ([int]$osInfo.BuildNumber -lt 22000 -or $osInfo.Caption -notmatch 'Windows 11') { throw 'Windows 11 target host is required' }
     $env:WSL_UTF8 = '1'

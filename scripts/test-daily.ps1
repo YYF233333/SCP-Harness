@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $projectPath = Split-Path -Parent $PSScriptRoot
-if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before using its dedicated SCP-Test environment.' }
+if (Get-Process -Name scp, scph -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before using its dedicated SCP-Test environment.' }
 $evidencePath = Join-Path $projectPath ('.local\daily\' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $evidencePath -Force | Out-Null
 $runDaily = @'

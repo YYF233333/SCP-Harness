@@ -17,7 +17,7 @@ authority, without recognizing any provider.
 | --- | --- | --- |
 | `/scp/attempt/input.json`, `context/` | Read | Root-owned; Core materialization and bounded cleanup |
 | `workspace/` for mutation | Read/write | Core capture after successful termination; bounded cleanup before reuse |
-| `workspace/` for review | Read only | Root-owned Unix modes; never mutation capture |
+| `workspace/` for review or discussion | Read only | Root-owned Unix modes; never mutation capture |
 | `workspace/` for none operations | Absent | No placeholder workspace |
 | `/scp/attempt/result.json` | Read/write | Explicit, precreated output file; Core-owned parent |
 | `/home/scp`, `/tmp`, `/var/tmp` | Read/write | Per-boot tmpfs; destroyed by distro termination |
@@ -82,18 +82,6 @@ create a self-hosting Task or replace the accepted controller. The OS tests use
 the existing installed PE probe from Windows release isolation validation.
 Windows release acceptance remains a separate reviewed-source validation layer.
 
-## Discussion boundary amendment
-
-Discussion uses the same bounded worker execution and mandatory termination, with
-workspace=readonly and synthetic_git=false. Its resource anchor is Task root; its
-semantic target remains the Option. Core never captures a discussion Artifact.
-The minimal card has repository.read/process.execute/claim.publish and no write,
-release, allocation or governance capability. The installed external bundle gains
-only an operation registry entry, Explorer-equivalent model binding and strict
-answer prompt via scripts/enable-codex-discussion.py. Provider sandbox/approval
-profiles, credential handling and volatile HOME remain unchanged.
-
-Windows final acceptance explicitly runs the real Codex discussion/readonly probe,
-no-auto-release polling, explicit mutation release, protected test/review/promotion
-and idle-after-promotion checks. It includes the existing SCP-Worker/SCP-Test OS
-boundary tests and the shared 8 GiB WSL limit check.
+Discussion uses this same OS boundary. Its protocol and capabilities are described
+in [worker protocol](worker-protocol.md#discussion-and-host-release); deployment
+upgrades and release checks are in [operations](operations.md#enabling-discussion-in-an-existing-deployment).

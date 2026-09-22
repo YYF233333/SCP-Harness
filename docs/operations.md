@@ -26,11 +26,13 @@ Run as a non-root user so read-only workspace checks use real Unix permissions.
 This local path tests semantics; the Windows/WSL host isolation boundary belongs
 to release validation.
 
-Windows-specific test entry points require `-tags=release`. The release script
-selects only the nine platform boundary tests listed in
-[test-migration.md](test-migration.md). A plain Windows `go test ./...` does not
-start WSL and is not a substitute for the daily Linux suite. Shared test bodies
-keep portable lifecycle, settlement and recovery assertions in the Linux suite.
+Windows-specific test entry points require `-tags=release`. The current release
+selection is maintained in [`scripts/final-acceptance.ps1`](../scripts/final-acceptance.ps1):
+Windows/WSL boundaries, lifecycle and recovery, authority regressions, observation,
+and real Codex integration (`codex_integration`). A plain Windows `go test ./...`
+does not start WSL and is not a substitute for the daily Linux suite. Shared test
+bodies keep portable lifecycle, settlement and recovery assertions in the Linux
+suite. `TestRecoveryProcessHelper` is a subprocess entry point used by crash tests.
 
 All development edits remain in the original Windows repository. To execute its
 current files in the isolated test distro, use `scripts/test-daily.ps1`. It streams
@@ -109,15 +111,14 @@ remain unchanged. This is dependency provisioning, not a copy of Core state.
 Archive attributes are unsupported. Any `export-ignore` or `export-subst` text in
 an exact-SHA tracked `.gitattributes` blob (including comments, disabled rules and
 macros) rejects that snapshot as `REPOSITORY_UNAVAILABLE`. One bounded exact-tree
-Git grep performs this check; no attribute parser or per-path evaluation exists.
-Grep and archive use temporary Core-owned Git metadata referencing the original
-object directory. Original repository `info/attributes`, local/user/system Git
-configuration and ambient Git overrides are not used. Global/system attributes are
-disabled explicitly. A fixed private byte-preservation policy disables checkout
-conversion, so ordinary text/EOL rules cannot change the exported blob bytes.
-No repository content or worktree is cloned/copied to establish this environment.
+Git grep performs this check. Exports preserve blob bytes and ignore ambient Git
+configuration and attributes; see specification §§25/29 for the exact rules.
 
 ## Configure and run
+
+The [Windows installer](windows-installation.md) exposes the CLI as `scph` and
+sets a user-level `SCP_CONFIG` path. All `scp` command examples below also work
+with `scph`; an explicit `--config` always takes precedence.
 
 Copy `scp.example.json` to a caller-selected config file and explicitly set
 database, Artifact store, card paths, worker commands, protected test command,
@@ -125,6 +126,11 @@ all limits and timeouts. Relative host paths resolve against the config director
 The example's worker commands are installation locations to fill, and its protected
 test command is `go test ./...` in `SCP-Test`; provision the toolchain and module cache there before self-hosting. Set an explicit timeout and funded test budget appropriate to the daily suite.
 These are examples, not defaults. `scp init` also requires a valid existing config.
+
+The v0 database schema is embedded from [`internal/store/schema.sql`](../internal/store/schema.sql).
+`scp init` initializes it transactionally and is idempotent; unsupported versions
+fail closed. State updates validate references, resource conservation and immutable
+history before committing. There are no external runtime migration files.
 
 Use the fixed, previously accepted controller (`scp.exe`) for normal work.
 
@@ -202,20 +208,9 @@ provenance. Task close retires every remaining account balance exactly once.
 
 Task lifecycle changes, Option release/discuss/close and qualifying `fulfilled` Claims share one
 non-waiting Core control gate per database and Task ID. Contention
-returns `BLOCKED`; it is not retried. The Windows gate uses atomic creation of a
-named kernel mutex and retains only the first creator's non-inheritable handle;
-handle lifetime provides exclusion without thread ownership or Go thread pinning.
-The Windows name includes database volume/file identity. Linux local execution uses a nonblocking file lock per configured database path and Task ID; its lock files are retained to avoid changing a held lock inode. Database hardlink aliases are outside the v0 acceptance requirements.
-See [CreateMutexW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw)
-and [file identity](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
-
-The gate spans cancellation and final commit but never holds a SQLite write
-transaction while waiting. Existing execution capture/settlement remains free to
-finish. A competing worker completion Claim is recorded as `BLOCKED` independently
-of its Attempt's settlement. Ordinary informational Claims remain available.
-Before suspension commits, Core rechecks Attempts, all leases (including protected
-tests) and the execution slot; shared state validation enforces the same condition
-on both SUSPENDED and CLOSED Tasks.
+returns `BLOCKED`; it is not retried. Execution capture/settlement remains free to
+finish, and ordinary informational Claims remain available. Suspension and close
+wait for cancellation and require no active Attempts, leases or execution slot.
 
 If control exits or fails after cancellation, the OS handle is released but the
 durable cancellation flag stays. New control requests cannot take over that flag.
@@ -252,7 +247,7 @@ committed source on the actual Windows 11 host with both real WSL2 distros:
 
 `build.ps1` writes `.local/build/scp.exe`. `final-acceptance.ps1` builds a separate
 release candidate under `.local/acceptance/<HEAD>/`, installs fixture executables
-in both distros, runs only the release selection with `-tags=release`, and records
+in both distros, runs the selection with `-tags 'release codex_integration'`, and records
 the source HEAD, binary hash, test log and mapping. Neither script overwrites the
 accepted root `scp.exe`. O5 review and a user's explicit replacement follow release
 verification; a green daily suite never replaces the controller automatically.
@@ -277,7 +272,6 @@ without changing credentials or runtime isolation. Use the installed
 acceptance script requires the real authenticated bundle and runs its model tests;
 there is no skip/fake fallback for those cases.
 
-Release source admission permits pre-existing untracked docs/reports/*.md, *.zip and
-*.sha256 report outputs and their directory-local .gitattributes; tracked edits and all other untracked files are rejected.
+Release source admission rejects tracked edits and non-ignored untracked files.
 WSL package tests run sequentially (-p=1) because both distros are shared execution
-resources. The accepted controller is not replaced by acceptance.
+resources.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 	"scp-harness/internal/scheduler"
 	"scp-harness/internal/wsl"
 )
+
+//go:embed VERSION
+var version string
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, out, errout io.Writer) (exit int) {
@@ -58,9 +62,22 @@ func run(args []string, out, errout io.Writer) (exit int) {
 			exit = emit(nil, model.Err("INTERNAL_ERROR", "panic boundary: %v", v))
 		}
 	}()
-	configPath := "scp.json"
+	configPath := os.Getenv("SCP_CONFIG")
+	if configPath == "" {
+		configPath = "scp.json"
+	}
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
 		switch args[0] {
+		case "--version":
+			if len(args) != 1 {
+				return emit(nil, model.Err("USAGE_ERROR", "--version takes no arguments"))
+			}
+			command = "version"
+			if asJSON {
+				return emit(map[string]string{"version": strings.TrimSpace(version)}, nil)
+			}
+			fmt.Fprintf(out, "SCP Harness v%s\n", strings.TrimSpace(version))
+			return 0
 		case "--json":
 			asJSON = true
 			args = args[1:]

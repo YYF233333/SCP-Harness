@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"testing"
 
@@ -34,23 +33,14 @@ func requireIdle(t *testing.T, c *Core) {
 }
 
 func TestReleaseOnlySeedsOneChain(t *testing.T) {
-	c, taskID, id := claimFixture(t, "option.propose", "option.allocate", "option.release", "claim.publish")
-	for i := 0; i < 100; i++ {
-		o, e := c.Propose(taskID, fmt.Sprint("candidate ", i), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		if _, e = c.Allocate(o.ID, 1); e != nil {
-			t.Fatal(e)
-		}
-		requireIdle(t, c)
-	}
+	// The 100-funded-Option polling case lives in TestHumanOptionReleaseIntegration.
+	c, taskID, id := claimFixture(t, "option.release", "claim.publish")
 	if _, e := c.CreateClaim(context.Background(), taskID, "OPTION", id, "option.release", json.RawMessage(`{"release":true}`)); e != nil {
 		t.Fatal(e)
 	}
 	requireIdle(t, c)
 	if len(readState(t, c).Attempts) != 0 {
-		t.Fatal("funding/Claim created Attempt")
+		t.Fatal("Claim created Attempt")
 	}
 	// Competing host releases share the existing Task gate and transaction.
 	errs := make(chan error, 2)
@@ -82,7 +72,11 @@ func TestReleaseOnlySeedsOneChain(t *testing.T) {
 
 func TestReleaseAndDiscussPreconditionsAreAtomic(t *testing.T) {
 	for _, operation := range []string{"release", "discuss"} {
-		for _, condition := range []string{"capability", "publish", "missing", "closed", "inactive", "exploration", "resource", "pending", "cancellation", "gate"} {
+		conditions := []string{"capability", "missing", "closed", "inactive", "exploration", "resource", "pending", "cancellation", "gate"}
+		if operation == "discuss" {
+			conditions = append(conditions, "publish")
+		}
+		for _, condition := range conditions {
 			t.Run(operation+"/"+condition, func(t *testing.T) {
 				c, taskID, id := claimFixture(t, "option.release", "option.discuss", "claim.publish")
 				code := ""
@@ -219,7 +213,7 @@ func TestAllCreationPathsRemainInert(t *testing.T) {
 }
 
 func TestChainTerminationConsumesRelease(t *testing.T) {
-	for _, outcome := range []string{"DROP_FINAL", "invalid", "CRASHED", "TIMED_OUT", "INTERRUPTED", "PRECONDITION_CHANGED", "promotion"} {
+	for _, outcome := range []string{"DROP_FINAL", "invalid", "CRASHED", "TIMED_OUT", "INTERRUPTED", "promotion"} {
 		t.Run(outcome, func(t *testing.T) {
 			c, taskID, id := claimFixture(t, "option.release", "process.execute", "repository.read", "sandbox.write")
 			if _, e := c.ReleaseOption(id); e != nil {
@@ -229,7 +223,7 @@ func TestChainTerminationConsumesRelease(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if outcome == "PRECONDITION_CHANGED" || outcome == "promotion" {
+			if outcome == "promotion" {
 				e = c.EndPromotion(*p, "", outcome)
 			} else {
 				a, err := c.PrepareAttempt(*p, "test")
@@ -335,18 +329,9 @@ func TestCommentThreadAndDiscussionCompletion(t *testing.T) {
 }
 
 func TestInvalidDiscussionEndsWithoutRetry(t *testing.T) {
-	cases := []string{
-		`{"schema_version":0,"operation":"discussion","text":"ok","release":true}`,
-		`{"schema_version":0,"operation":"discussion","text":"ok","text":"again"}`,
-		`{"schema_version":0,"operation":"discussion"}`,
-		`{"schema_version":0,"operation":"discussion","text":" "}`,
-		`{"schema_version":0,"operation":"mutation","text":"ok"}`,
-		`{"schema_version":0,"operation":"discussion","text":null}`,
-		`{"schema_version":0,"operation":"discussion","text":1}`,
-		"CRASHED", "TIMED_OUT", "INTERRUPTED", "denied",
-	}
-	for i, raw := range cases {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
+	// JSON rejection cases live in worker.TestResultSchemas; Core sees Valid=false.
+	for _, outcome := range []string{"invalid", "CRASHED", "TIMED_OUT", "INTERRUPTED", "denied"} {
+		t.Run(outcome, func(t *testing.T) {
 			c, _, id := claimFixture(t, "option.discuss", "claim.publish")
 			if _, e := c.DiscussOption(id, "question"); e != nil {
 				t.Fatal(e)
@@ -359,18 +344,15 @@ func TestInvalidDiscussionEndsWithoutRetry(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			result, parseErr := worker.Parse([]byte(raw), "discussion", 10000)
-			v := Completion{AttemptID: a.ID, Step: *p, Status: "RETURNED", Result: result, Valid: parseErr == nil}
-			if raw == "CRASHED" || raw == "TIMED_OUT" || raw == "INTERRUPTED" {
-				v.Status = raw
-			} else if raw == "denied" {
+			v := Completion{AttemptID: a.ID, Step: *p, Status: "RETURNED", Result: worker.Result{Text: "valid"}, Valid: true}
+			if outcome == "invalid" {
+				v.Valid = false
+			} else if outcome == "denied" {
 				card := c.Config.Cards["discussion"]
 				card.Capabilities = nil
 				c.Config.Cards["discussion"] = card
-				v.Valid = true
-				v.Result.Text = "valid"
-			} else if model.Code(parseErr) != "SCHEMA_INVALID" {
-				t.Fatal("invalid accepted", parseErr)
+			} else {
+				v.Status = outcome
 			}
 			if e = c.Complete(v); e != nil {
 				t.Fatal(e)

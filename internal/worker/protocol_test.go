@@ -13,14 +13,19 @@ func TestResultSchemas(t *testing.T) {
 		"option_generation": `{"schema_version":0,"operation":"option_generation","options":[{"text":"route"}]}`,
 		"merge_judge":       `{"schema_version":0,"operation":"merge_judge","groups":[["a"]]}`,
 		"merge_synth":       `{"schema_version":0,"operation":"merge_synth","text":"route"}`,
+		"discussion":        `{"schema_version":0,"operation":"discussion","text":"answer"}`,
 	}
 	for op, data := range valid {
 		t.Run(op, func(t *testing.T) {
-			if _, e := Parse([]byte(data), op, 4096); e != nil {
+			result, e := Parse([]byte(data), op, 4096)
+			if e != nil {
 				t.Fatal(e)
 			}
 			var m map[string]any
 			json.Unmarshal([]byte(data), &m)
+			if text, ok := m["text"]; ok && result.Text != text {
+				t.Fatal("result text lost")
+			}
 			for key := range m {
 				var v map[string]any
 				json.Unmarshal([]byte(data), &v)
@@ -45,12 +50,15 @@ func TestResultSchemas(t *testing.T) {
 			}
 		})
 	}
-	for _, data := range []string{`{"schema_version":0,"operation":"mutation","disposition":"drop_final","claims":[],"new_options":[]}`, `{"schema_version":0,"operation":"mutation","disposition":"DROP_FINAL","claims":[],"new_options":[{"text":" "}]}`, `{"schema_version":0,"operation":"review","verdict":"APPROVE","findings":[" "],"claims":[]}`} {
-		op := "mutation"
-		if strings.Contains(data, `"review"`) {
-			op = "review"
-		}
-		if _, e := Parse([]byte(data), op, 4096); e == nil {
+	for _, tc := range []struct{ operation, data string }{
+		{"mutation", `{"schema_version":0,"operation":"mutation","disposition":"drop_final","claims":[],"new_options":[]}`},
+		{"mutation", `{"schema_version":0,"operation":"mutation","disposition":"DROP_FINAL","claims":[],"new_options":[{"text":" "}]}`},
+		{"review", `{"schema_version":0,"operation":"review","verdict":"APPROVE","findings":[" "],"claims":[]}`},
+		{"discussion", `{"schema_version":0,"operation":"discussion","text":" "}`},
+		{"discussion", `{"schema_version":0,"operation":"mutation","text":"ok"}`},
+		{"discussion", `{"schema_version":0,"operation":"discussion","text":1}`},
+	} {
+		if _, e := Parse([]byte(tc.data), tc.operation, 4096); e == nil {
 			t.Fatal("invalid enum/text accepted")
 		}
 	}
@@ -87,8 +95,5 @@ func TestWorkersCannotRequestRelease(t *testing.T) {
 		if _, e := Parse([]byte(raw), "discussion", 10000); e == nil {
 			t.Fatal("discussion authority field", field)
 		}
-	}
-	if r, e := Parse([]byte(`{"schema_version":0,"operation":"discussion","text":"answer"}`), "discussion", 10000); e != nil || r.Text != "answer" {
-		t.Fatal(e)
 	}
 }

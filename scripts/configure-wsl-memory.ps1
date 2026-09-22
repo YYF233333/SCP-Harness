@@ -1,6 +1,6 @@
 param()
 $ErrorActionPreference = 'Stop'
-if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before reconfiguring WSL.' }
+if (Get-Process -Name scp, scph -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before reconfiguring WSL.' }
 $configPath = Join-Path $env:USERPROFILE '.wslconfig'
 $lines = [System.Collections.Generic.List[string]]::new()
 if (Test-Path -LiteralPath $configPath) {

@@ -2028,3 +2028,17 @@ diff including .git, readonly/none rejection, concurrent/read/bound failure isol
 and all existing release/authority regressions. Final verification retains gofmt,
 diff --check, full daily Linux test/vet, architecture constraints, Windows/WSL release
 acceptance and the unmodified real TestCodexExecutionBoundary.
+
+## Windows distribution v0.1.0 (2026-09-22)
+
+The Windows installer exposes the existing CLI as `scph` to avoid the OpenSSH
+`scp` command. The release version is embedded from `cmd/scp/VERSION`.
+`--version` prints `SCP Harness v<version>` without opening configuration or
+state; `--json --version` returns the ordinary envelope with command `version`
+and data `{"version":"<version>"}`. It accepts no command arguments.
+
+Configuration selection is explicit `--config PATH`, then `SCP_CONFIG`, then
+the existing `scp.json` in the current directory. The per-user installer sets
+`SCP_CONFIG` only if absent and keeps mutable configuration/data separate from
+the program directory. These distribution changes do not change schema_version,
+worker protocols, execution authority or release authorization.

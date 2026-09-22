@@ -1,7 +1,7 @@
 param([ValidateSet('SCP-Worker', 'SCP-Test')][string[]]$Distro = @('SCP-Worker', 'SCP-Test'))
 $ErrorActionPreference = 'Stop'
 $env:WSL_UTF8 = '1'
-if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before configuring execution distros.' }
+if (Get-Process -Name scp, scph -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before configuring execution distros.' }
 $listing = (wsl --list --verbose | Out-String) -replace "`0", ''
 if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate WSL distros.' }
 foreach ($name in $Distro) {

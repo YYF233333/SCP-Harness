@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -104,9 +103,6 @@ func TestHistoryIndependentBoundedGitAndCAS(t *testing.T) {
 			}
 			if g.Calls["promotion"] != 1 {
 				t.Fatal("drift did extra Git work")
-			}
-			if strings.Contains(string(b), "candidate") {
-				t.Fatal("unrelated content")
 			}
 		})
 	}

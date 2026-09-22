@@ -37,6 +37,60 @@ func keys(t *testing.T, v any, expected string) {
 		t.Fatalf("projection keys %v != %v", got, want)
 	}
 }
+
+func TestVersionAndGlobalConfig(t *testing.T) {
+	t.Setenv("SCP_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	var out, errs bytes.Buffer
+	if code := run([]string{"--version"}, &out, &errs); code != 0 || out.String() != "SCP Harness v"+strings.TrimSpace(version)+"\n" {
+		t.Fatalf("version requires no config: %d %s %s", code, &out, &errs)
+	}
+	out.Reset()
+	if code := run([]string{"--json", "--version"}, &out, &errs); code != 0 {
+		t.Fatal(code, &errs)
+	}
+	var envelope struct {
+		OK      bool              `json:"ok"`
+		Command string            `json:"command"`
+		Data    map[string]string `json:"data"`
+	}
+	if e := json.Unmarshal(out.Bytes(), &envelope); e != nil || !envelope.OK || envelope.Command != "version" || envelope.Data["version"] != strings.TrimSpace(version) {
+		t.Fatal("version envelope", envelope, e)
+	}
+	root, e := filepath.Abs(filepath.Join("..", ".."))
+	if e != nil {
+		t.Fatal(e)
+	}
+	cfg, e := config.Load(filepath.Join(root, "scp.example.json"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	dir := t.TempDir()
+	cfg.Database, cfg.Artifacts = filepath.Join(dir, "state.db"), filepath.Join(dir, "artifacts")
+	for id, path := range cfg.RoleCards {
+		cfg.RoleCards[id] = filepath.Join(root, path)
+	}
+	data, e := json.Marshal(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(dir, "scp.json")
+	if e = os.WriteFile(path, data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("SCP_CONFIG", path)
+	t.Chdir(t.TempDir())
+	out.Reset()
+	if code := run([]string{"init"}, &out, &errs); code != 0 {
+		t.Fatal("global config not loaded from unrelated directory", code, &errs)
+	}
+	if _, e = os.Stat(cfg.Database); e != nil {
+		t.Fatal(e)
+	}
+	if code := run([]string{"--config", "missing.json", "status"}, &out, &errs); code != 2 {
+		t.Fatal("explicit config must override global config", code)
+	}
+}
+
 func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	root, e := filepath.Abs(filepath.Join("..", ".."))
 	if e != nil {

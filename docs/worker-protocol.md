@@ -2,9 +2,8 @@
 
 The executable specification is [the execution plan](spec/scp_harness_v0_execution_plan.md).
 The role-card schema and frozen walkthrough in `spec/` remain authoritative.
-The execution plan includes the O5 council's 2026-09-21 Claim clarification;
-`MANIFEST.sha256` hashes the current authority files. The original input archive's
-execution-plan hash was `c99d4c1c3dfe742c2c012e1481bc58aeb8742b7bad141d3c8cf5392c000c6e23`.
+The execution plan includes the Claim, human-release and live-observation amendments;
+`MANIFEST.sha256` hashes the current specification files.
 
 ## Production role separation
 
@@ -79,23 +78,12 @@ left by a crashed Core. Regular files and
 directories are supported; links and special files fail closed. A synthetic Git
 repository contains one base commit, no remotes, and is excluded from capture.
 
-## Live observation
-
 Core creates host-owned stdout/stderr files before worker launch. Its bounded pipe
 capture writes them while running; overflow still drains/discards beyond the
 existing per-stream cap. Workers cannot write these host files. Attempt paths are
 stable during PREPARING/RUNNING, and retained after return, crash, timeout or
 interrupt. No new worker fields or provider protocol are involved.
-
-`scp attempt watch ATTEMPT_ID` replays available output and follows to terminal;
-Ctrl+C only exits the watcher. It has no stdin/instruction channel. Each stream's
-byte order is retained; cross-stream ordering is best effort. `--json` is rejected.
-`scp attempt diff ATTEMPT_ID` reads a bounded capture of the live writable workspace
-against its immutable input, including continuation Artifact input. It excludes
-synthetic Git and never invokes candidate code or Git. A/M/D and bounded textual
-hunks are observational, not a published snapshot. Concurrent changes or read
-failures return a retry error without touching authority or stopping the worker.
-Readonly/none Attempts reject diff; terminal mutation results remain Artifacts.
+See [live observation](operations.md#observe-a-live-attempt) for operator commands.
 
 ## Discussion and host release
 

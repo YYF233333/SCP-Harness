@@ -65,7 +65,25 @@ func TestConfigRejectsUnknownAndMissingBounds(t *testing.T) {
 	if e = json.Unmarshal(b, &base); e != nil {
 		t.Fatal(e)
 	}
-	for _, kind := range []string{"unknown", "zero_timeout", "missing_limit", "duplicate_operation", "shared_distro", "missing_test_distro"} {
+	root, e := filepath.Abs(filepath.Join("..", ".."))
+	if e != nil {
+		t.Fatal(e)
+	}
+	for id, path := range base["role_cards"].(map[string]any) {
+		base["role_cards"].(map[string]any)[id] = filepath.Join(root, path.(string))
+	}
+	b, e = json.Marshal(base)
+	if e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if e = os.WriteFile(path, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = Load(path); e != nil {
+		t.Fatal("relocated baseline must be valid", e)
+	}
+	for _, kind := range []string{"unknown", "zero_timeout", "missing_limit", "unknown_operation", "shared_distro", "missing_test_distro"} {
 		t.Run(kind, func(t *testing.T) {
 			var m map[string]any
 			json.Unmarshal(b, &m)
@@ -80,10 +98,9 @@ func TestConfigRejectsUnknownAndMissingBounds(t *testing.T) {
 				m["limits"].(map[string]any)["external_process_timeout_ms"] = 0
 			case "missing_limit":
 				delete(m["limits"].(map[string]any), "workspace_max_bytes")
-			case "duplicate_operation":
+			case "unknown_operation":
 				m["operation_profiles"].(map[string]any)["new_operation"] = "operator"
 			}
-			path := filepath.Join(t.TempDir(), "config.json")
 			data, _ := json.Marshal(m)
 			if e = os.WriteFile(path, data, 0600); e != nil {
 				t.Fatal(e)
