@@ -6,6 +6,20 @@ The execution plan includes the O5 council's 2026-09-21 Claim clarification;
 `MANIFEST.sha256` hashes the current authority files. The original input archive's
 execution-plan hash was `c99d4c1c3dfe742c2c012e1481bc58aeb8742b7bad141d3c8cf5392c000c6e23`.
 
+## Production role separation
+
+Core remains provider-opaque. Role names are provenance labels; authority comes
+from role-card context and capabilities.
+
+- `option_generation`, `merge_judge`, and `merge_synth` use an Explorer profile
+  with `workspace=none`.
+- `mutation` uses a Builder profile with a writable synthetic workspace.
+- `review` uses a Reviewer profile with a read-only submitted Artifact workspace
+  and visibility of the protected-test result.
+
+Provider, model, prompt, and reasoning bindings are deployment concerns outside
+Core. These profiles do not change the normative specification.
+
 Each configured executable runs as the unprivileged `scp` user in the dedicated
 `SCP-Worker` WSL2 distro. Protected tests run separately in `SCP-Test`. Core supplies these environment variables to worker Attempts:
 
