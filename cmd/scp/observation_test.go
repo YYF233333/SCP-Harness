@@ -481,7 +481,8 @@ func TestObservationReadonlyRejection(t *testing.T) {
 func TestObservationConcurrentCapture(t *testing.T) {
 	script := `exec python3 -u -c 'import os,time
 f=open("changing.bin","wb",buffering=0)
-f.write(b"x"*1048576)
+# Span scheduler quanta so the capture actually overlaps a running writer.
+f.write(b"x"*16777216)
 print("A",flush=True)
 end=time.monotonic()+50
 while time.monotonic()<end:

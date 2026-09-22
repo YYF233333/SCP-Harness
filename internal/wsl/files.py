@@ -46,6 +46,63 @@ def identity(info):
     return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
+def scan_fd(root_fd, limits):
+    # Names are archive labels only. Every lookup is relative to a pinned
+    # directory, including both inventories used by live observation.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    stack = []
+    count = total = 0
+
+    def enter(fd, prefix, expected, entry_name):
+        try:
+            if identity(os.fstat(fd)) != expected:
+                fail('live workspace changed during observation; retry')
+            entries = os.scandir(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+        stack.append((fd, prefix, expected, entries, entry_name))
+
+    try:
+        # A fresh directory description avoids sharing enumeration offsets with
+        # root_fd or the other inventory; '.' is resolved only through root_fd.
+        enter(os.open('.', flags, dir_fd=root_fd), '', identity(os.fstat(root_fd)), None)
+        while stack:
+            fd, prefix, expected, entries, entry_name = stack[-1]
+            entry = next(entries, None)
+            if entry is None:
+                if identity(os.fstat(fd)) != expected:
+                    fail('live workspace changed during observation; retry')
+                if len(stack) > 1:
+                    if identity(os.stat(entry_name, dir_fd=stack[-2][0], follow_symlinks=False)) != expected:
+                        fail('live workspace changed during observation; retry')
+                stack.pop()
+                entries.close()
+                os.close(fd)
+                continue
+            name = prefix + entry.name
+            info = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+            if name == '.git' and stat.S_ISDIR(info.st_mode):
+                continue
+            count += 1
+            if count > limits['workspace_max_files'] or len(name.encode()) > limits['path_max_bytes']:
+                fail('workspace count/path bound')
+            if not stat.S_ISREG(info.st_mode) and not stat.S_ISDIR(info.st_mode):
+                fail('unsupported special file: ' + name)
+            if stat.S_ISREG(info.st_mode):
+                if info.st_nlink != 1:
+                    fail('unsupported hard link: ' + name)
+                total += info.st_size
+                if info.st_size > limits['single_file_max_bytes'] or total > limits['workspace_max_bytes']:
+                    fail('workspace byte bound')
+            yield name, info
+            if stat.S_ISDIR(info.st_mode):
+                enter(os.open(entry.name, flags, dir_fd=fd), name + '/', identity(info), entry.name)
+    finally:
+        for fd, _, _, entries, _ in reversed(stack):
+            entries.close()
+            os.close(fd)
+
 def capture(base, limits, archive):
     # Both terminal capture and live observation use the same admission bounds.
     # Pin every path component without following links; concurrent replacement
@@ -54,9 +111,9 @@ def capture(base, limits, archive):
     root_fd = os.open(base, flags | os.O_DIRECTORY)
     try:
         initial_root = identity(os.fstat(root_fd))
-        files = list(scan(base, limits, True))
-        inventory = {name: identity(info) for _, name, info in files}
-        for _, name, info in files:
+        files = list(scan_fd(root_fd, limits))
+        inventory = {name: identity(info) for name, info in files}
+        for name, info in files:
             fd = os.dup(root_fd)
             try:
                 parts = name.split('/')
@@ -80,7 +137,7 @@ def capture(base, limits, archive):
                     fail('live workspace changed during observation; retry')
             finally:
                 os.close(fd)
-        final = {name: identity(info) for _, name, info in scan(base, limits, True)}
+        final = {name: identity(info) for name, info in scan_fd(root_fd, limits)}
         if inventory != final or identity(os.stat(base, follow_symlinks=False)) != initial_root:
             fail('live workspace changed during observation; retry')
     finally:
@@ -175,8 +232,6 @@ elif op in ('capture', 'observe'):
     if owner != sys.argv[4]:
         fail('workspace belongs to a different Attempt')
     base = root + '/workspace'
-    if not os.path.isdir(base) or os.path.islink(base):
-        fail('workspace missing or invalid')
     try:
         with tarfile.open(fileobj=sys.stdout.buffer, mode='w|', format=tarfile.PAX_FORMAT) as archive:
             capture(base, limits, archive)
