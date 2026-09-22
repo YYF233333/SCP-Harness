@@ -15,8 +15,11 @@ import (
 func TestR1bCancellationCannotBeTakenOver(t *testing.T) {
 	for _, action := range []string{"option_close", "option_fulfilled"} {
 		t.Run(action, func(t *testing.T) {
-			c, taskID, optionID := claimFixture(t, "claim.publish", "option.complete", "task.suspend", "process.execute", "sandbox.write", "repository.read")
+			c, taskID, optionID := claimFixture(t, "option.release", "claim.publish", "option.complete", "task.suspend", "process.execute", "sandbox.write", "repository.read")
 			owner := model.ID()
+			if _, e := c.ReleaseOption(optionID); e != nil {
+				t.Fatal(e)
+			}
 			p, e := c.Next(owner)
 			if e != nil || p == nil {
 				t.Fatalf("next: %v", e)
@@ -52,6 +55,15 @@ func TestR1bCancellationCannotBeTakenOver(t *testing.T) {
 func controlAttempt(t *testing.T, c *Core) (*model.Step, *model.Attempt, string) {
 	t.Helper()
 	owner := model.ID()
+	s, e := c.Read()
+	if e != nil {
+		t.Fatal(e)
+	}
+	for id := range s.Options {
+		if _, e = c.ReleaseOption(id); e != nil {
+			t.Fatal(e)
+		}
+	}
 	p, e := c.Next(owner)
 	if e != nil || p == nil {
 		t.Fatalf("next: %v", e)
@@ -69,7 +81,7 @@ func controlAttempt(t *testing.T, c *Core) (*model.Step, *model.Attempt, string)
 func TestR1bControlInterleavings(t *testing.T) {
 	for _, action := range []string{"option_close", "option_fulfilled"} {
 		t.Run(action, func(t *testing.T) {
-			c, taskID, optionID := claimFixture(t, "claim.publish", "resource.propose", "option.complete", "task.suspend", "process.execute", "sandbox.write", "repository.read")
+			c, taskID, optionID := claimFixture(t, "option.release", "claim.publish", "resource.propose", "option.complete", "task.suspend", "process.execute", "sandbox.write", "repository.read")
 			p, a, owner := controlAttempt(t, c)
 			_, unlock, e := c.beginControl(taskID)
 			if e != nil {
@@ -134,12 +146,18 @@ func TestR1bControlInterleavings(t *testing.T) {
 }
 
 func testTaskControlEntrypoints(t *testing.T) {
-	c, taskID, optionID := claimFixture(t, "claim.publish", "option.complete", "task.complete", "task.suspend", "task.resume")
+	c, taskID, optionID := claimFixture(t, "option.release", "option.discuss", "claim.publish", "option.complete", "task.complete", "task.suspend", "task.resume")
 	unlock, e := c.LockTaskControl(taskID)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer unlock()
+	if _, e = c.ReleaseOption(optionID); model.Code(e) != "BLOCKED" {
+		t.Fatal(e)
+	}
+	if _, e = c.DiscussOption(optionID, "why?"); model.Code(e) != "BLOCKED" {
+		t.Fatal(e)
+	}
 	for _, action := range []string{"suspend", "resume", "close"} {
 		if _, e = c.Lifecycle(context.Background(), taskID, action); model.Code(e) != "BLOCKED" {
 			t.Fatalf("%s bypassed Task control gate: %v", action, e)
@@ -167,7 +185,7 @@ func testTaskControlEntrypoints(t *testing.T) {
 }
 
 func TestR1bCancellationErrorKeepsProtection(t *testing.T) {
-	c, taskID, _ := claimFixture(t, "task.suspend", "process.execute", "sandbox.write", "repository.read")
+	c, taskID, _ := claimFixture(t, "option.release", "task.suspend", "process.execute", "sandbox.write", "repository.read")
 	p, a, _ := controlAttempt(t, c)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -195,7 +213,7 @@ func TestR1bWorkerCompletionDoesNotBlockSettlement(t *testing.T) {
 	for _, kind := range []string{"TASK", "OPTION"} {
 		for _, held := range []bool{false, true} {
 			t.Run(kind+map[bool]string{false: "/free", true: "/held"}[held], func(t *testing.T) {
-				c, taskID, optionID := claimFixture(t, "claim.publish", "task.complete", "option.complete", "process.execute", "sandbox.write", "repository.read")
+				c, taskID, optionID := claimFixture(t, "option.release", "claim.publish", "task.complete", "option.complete", "process.execute", "sandbox.write", "repository.read")
 				p, a, _ := controlAttempt(t, c)
 				if held {
 					unlock, e := c.LockTaskControl(taskID)
@@ -238,9 +256,12 @@ func TestR1bWorkerCompletionDoesNotBlockSettlement(t *testing.T) {
 func TestR1bInactiveTaskInvariant(t *testing.T) {
 	for _, activity := range []string{"attempt", "lease", "slot"} {
 		t.Run(activity, func(t *testing.T) {
-			c, taskID, optionID := claimFixture(t, "task.suspend", "process.execute", "sandbox.write", "repository.read")
+			c, taskID, optionID := claimFixture(t, "option.release", "task.suspend", "process.execute", "sandbox.write", "repository.read")
 			if activity == "attempt" {
 				owner := model.ID()
+				if _, e := c.ReleaseOption(optionID); e != nil {
+					t.Fatal(e)
+				}
 				p, e := c.Next(owner)
 				if e != nil || p == nil {
 					t.Fatalf("next: %v", e)

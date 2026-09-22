@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"os"
-	"sort"
 
 	"scp-harness/internal/config"
 	"scp-harness/internal/ledger"
@@ -12,6 +11,9 @@ import (
 )
 
 func (c *Core) Anchor(s *model.State, p *model.Step) (string, error) {
+	if p.Operation == "discussion" {
+		return p.TaskID, nil
+	}
 	if p.Operation == "merge_judge" || p.Operation == "merge_synth" {
 		return ledger.LCA(s, p.Participants)
 	}
@@ -94,41 +96,6 @@ func (c *Core) Next(owner string) (*model.Step, error) {
 				}
 			}
 		}
-		if next == nil {
-			opts := []*model.Option{}
-			for _, o := range s.Options {
-				opts = append(opts, o)
-			}
-			sort.Slice(opts, func(i, j int) bool {
-				if opts[i].Created == opts[j].Created {
-					return opts[i].ID < opts[j].ID
-				}
-				return opts[i].Created < opts[j].Created
-			})
-			rotated := map[string]bool{}
-			for _, id := range s.RoundRobin {
-				rotated[id] = true
-			}
-			ids := []string{}
-			for _, o := range opts {
-				if !rotated[o.ID] {
-					ids = append(ids, o.ID)
-				}
-			}
-			ids = append(ids, s.RoundRobin...)
-			for _, id := range ids {
-				o := s.Options[id]
-				if o == nil || s.Pending[o.TaskID] != nil || !s.Exploration[o.TaskID].Done {
-					continue
-				}
-				p := &model.Step{TaskID: o.TaskID, OptionID: id, Operation: "mutation", TargetType: "OPTION", TargetID: id}
-				if c.runnable(s, p) {
-					s.Pending[o.TaskID] = p
-					next = p
-					break
-				}
-			}
-		}
 		if next != nil {
 			s.Slot = model.Slot{State: "BUSY"}
 			s.SlotTask = next.TaskID
@@ -176,15 +143,6 @@ func release(s *model.State) {
 }
 func finishChain(s *model.State, p *model.Step) {
 	delete(s.Pending, p.TaskID)
-	if p.OptionID != "" {
-		q := []string{}
-		for _, id := range s.RoundRobin {
-			if id != p.OptionID {
-				q = append(q, id)
-			}
-		}
-		s.RoundRobin = append(q, p.OptionID)
-	}
 	release(s)
 }
 func (c *Core) Release(owner string) error {
@@ -308,7 +266,7 @@ func (c *Core) Complete(v Completion) error {
 		if a.Operation == "review" && !card.Has("review.decide") || a.Operation == "option_generation" && !card.Has("option.propose") || a.Operation == "merge_synth" && !card.Has("option.merge") {
 			v.Valid = false
 		}
-		if v.Artifact != nil {
+		if v.Artifact != nil && a.Operation == "mutation" {
 			s.Artifacts[v.Artifact.ID] = v.Artifact
 			a.ArtifactID = &v.Artifact.ID
 		}
@@ -338,6 +296,20 @@ func (c *Core) Complete(v Completion) error {
 			s.Touch(a.TaskID)
 			return nil
 		}
+		if a.Operation == "discussion" {
+			if v.Valid && a.Status == "RETURNED" && card.Has("claim.publish") {
+				payload, _ := json.Marshal(discussionText{Text: v.Result.Text})
+				if _, e := addClaim(s, t, card, "OPTION", a.TargetID, "discussion.reply", payload, a.SHA, a.Revision); e != nil {
+					return e
+				}
+			} else {
+				s.Audit(t.ID, "INVALID_OUTPUT", "discussion ended without reply")
+			}
+			finishChain(s, &v.Step)
+			s.Touch(t.ID)
+			return nil
+		}
+
 		ids := []string{}
 		if v.Valid && a.Status == "RETURNED" {
 			var controlErr error

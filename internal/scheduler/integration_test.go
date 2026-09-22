@@ -193,15 +193,26 @@ func testFrozenVortonA10(t *testing.T) {
 		t.Fatal("CP1 metering")
 	}
 	t.Log("CP1 PASS")
+	if _, e = c.DiscussOption(om.ID, "Why prototype first?"); e != nil {
+		t.Fatal(e)
+	}
+	step(t, engine)
+	thread, e := c.OptionThread(om.ID)
+	if e != nil || len(thread.Messages) != 2 {
+		t.Fatal("human discussion", e)
+	}
+	refined, e := c.Split(om.ID, []core.Child{{Text: "prototype-first"}}, true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Keep the frozen budget anchor: the zero-transfer refinement is inert.
+	if refined.Children[0].Remaining != 0 {
+		t.Fatal("refine moved budget")
+	}
+	s = state(t, c)
 	beforeRoot := s.Accounts[t1.ID].Remaining
 	if _, e = c.Allocate(om.ID, 240000); e != nil {
 		t.Fatal(e)
-	}
-	// Scheduling may persist the funded OM target between the two authorized
-	// transfers, before any lease/execution. This uses ordinary production Next.
-	next, e := c.Next(engine.Owner)
-	if e != nil || next == nil || next.OptionID != om.ID {
-		t.Fatalf("CP2 select OM: %v", e)
 	}
 	if _, e = c.Allocate(oa.ID, 120000); e != nil {
 		t.Fatal(e)
@@ -211,6 +222,12 @@ func testFrozenVortonA10(t *testing.T) {
 		t.Fatal("CP2 exact transfers")
 	}
 	t.Log("CP2 PASS")
+	if ran, e := engine.Step(ctx); e != nil || ran {
+		t.Fatal("funding released mutation", e)
+	}
+	if _, e = c.ReleaseOption(om.ID); e != nil {
+		t.Fatal(e)
+	}
 	for i := 0; i < 8; i++ {
 		step(t, engine)
 	}
@@ -251,6 +268,9 @@ func testFrozenVortonA10(t *testing.T) {
 		}
 	}
 	assertTree(t, c, repo, r1, map[string]string{"README.md": "base\n", "stage.txt": "fixed\n"})
+	if ran, e := engine.Step(ctx); e != nil || ran {
+		t.Fatal("promotion auto-released", e)
+	}
 	t.Log("CP3 PASS")
 	remaining := s.Accounts[om.ID].Remaining
 	root := s.Accounts[t1.ID].Remaining
@@ -271,18 +291,8 @@ func testFrozenVortonA10(t *testing.T) {
 		t.Fatal("CP5")
 	}
 	t.Log("CP5 PASS")
-	// OA may take its normal RR turn after CP5; its missing final result has no
-	// effect. The frozen bad-worker attempt is interrupted only after both child
-	// generations really exist inside the dedicated distro.
-	for {
-		next, e = c.Next(engine.Owner)
-		if e != nil || next == nil {
-			t.Fatalf("CP6 next: %v", e)
-		}
-		if next.OptionID == bad.ID {
-			break
-		}
-		step(t, engine)
+	if _, e = c.ReleaseOption(bad.ID); e != nil {
+		t.Fatal(e)
 	}
 	done := make(chan error, 1)
 	go func() { _, e := engine.Step(ctx); done <- e }()
@@ -343,6 +353,9 @@ func testFrozenVortonA10(t *testing.T) {
 	step(t, engine)
 	oe := optionText(t, c, t2.ID, "emergency-hotfix")
 	if _, e = c.Allocate(oe.ID, 80000); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = c.ReleaseOption(oe.ID); e != nil {
 		t.Fatal(e)
 	}
 	for i := 0; i < 4; i++ {
@@ -434,6 +447,9 @@ func testRealWorkerLifecycle(t *testing.T) {
 			if _, e = c.Allocate(o.ID, 60000); e != nil {
 				t.Fatal(e)
 			}
+			if _, e = c.ReleaseOption(o.ID); e != nil {
+				t.Fatal(e)
+			}
 			c.Config.Workers[0].Command = []string{fixtureWorker(t), tc.mode}
 			if tc.mode == "timeout-worker" {
 				c.Config.Workers[0].Timeout = 3000
@@ -484,6 +500,9 @@ func testRealWorkerLifecycle(t *testing.T) {
 					}
 				}
 				step(t, engine)
+			}
+			if ran, e := engine.Step(context.Background()); e != nil || ran {
+				t.Fatal("terminal mutation auto-retried", e)
 			}
 			t.Log(fmt.Sprintf("%s real lifecycle PASS", tc.mode))
 		})

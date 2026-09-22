@@ -1,11 +1,19 @@
 param([Parameter(Mandatory = $true)][string]$KnownNormativeFailures)
 $ErrorActionPreference = 'Stop'
 $previousAcceptanceExe = $env:SCP_ACCEPTANCE_EXE
+$previousCodexEvidence = $env:SCP_CODEX_EVIDENCE
+function Test-DirtySource {
+    # Existing untracked report bundles are not executable or normative inputs.
+    # Tracked edits and every other untracked file still fail source admission.
+    $changes = @(git status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source status' }
+    return @($changes | Where-Object { $_ -notmatch '^\?\? docs/reports/(.*\.(md|zip|sha256)|.*/\.gitattributes)$' }).Count -ne 0
+}
 Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     $sourceHead = (git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'Source HEAD unavailable' }
-    if (git status --porcelain) { throw 'Commit the reviewed source before release acceptance; working tree must be clean.' }
+    if (Test-DirtySource) { throw 'Commit the reviewed source before release acceptance; working tree must be clean.' }
     if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal scheduler before Windows release acceptance.' }
     $osInfo = Get-CimInstance Win32_OperatingSystem
     if ([int]$osInfo.BuildNumber -lt 22000 -or $osInfo.Caption -notmatch 'Windows 11') { throw 'Windows 11 target host is required' }
@@ -27,6 +35,7 @@ try {
     go build -trimpath -buildvcs=true -o $acceptanceExe ./cmd/scp
     if ($LASTEXITCODE -ne 0) { throw 'Source rebuild failed' }
     $env:SCP_ACCEPTANCE_EXE = $acceptanceExe
+    $env:SCP_CODEX_EVIDENCE = Join-Path $evidence 'codex'
     $cases = [ordered]@{
         CLI = @('TestAcceptanceExecutable')
         Control = @('TestR1bCrossProcessControlAndSettlement', 'TestR1bTaskControlIdentityAndEntrypoints')
@@ -34,12 +43,15 @@ try {
         Scheduler = @('TestRunningSchedulerSuspendSerializationSignalAndStaleLock')
         Walkthrough = @('TestFrozenVortonA10')
         Workers = @('TestRealWorkerLifecycle')
-        Isolation = @('TestActualInteropAndAutomountIsolation')
+        Isolation = @('TestActualInteropAndAutomountIsolation', 'TestWorkerRuntimeLifetime', 'TestWorkerHostAuthorityDenied', 'TestWorkerRuntimeAdmission')
+        HumanRelease = @('TestHumanOptionReleaseIntegration')
+        Regressions = @('TestR1ClaimsPreserveLifecycleCancellation', 'TestR3OversizedWorkspaceCleanupProgress', 'TestR3ProtectedCopyReallyDiscarded', 'TestR4UnavailableSnapshotHasNoCandidateEffects', 'TestR4ExactSnapshotAttributes', 'TestProtectedTestCannotBeOverriddenAndReviewerReadonly')
+        CodexDiscussionRelease = @('TestCodexExecutionBoundary')
     }
     $required = @($cases.Values | ForEach-Object { $_ })
     $selection = '^(' + (($required | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')$'
     $testLog = Join-Path $evidence 'release-windows.jsonl'
-    go test -tags=release ./... -count=1 -json -timeout=30m -run $selection | Set-Content -LiteralPath $testLog -Encoding utf8
+    go test -p=1 -tags 'release codex_integration' ./... -count=1 -json -timeout=45m -run $selection | Set-Content -LiteralPath $testLog -Encoding utf8
     $testExit = $LASTEXITCODE
     $events = @(Get-Content -LiteralPath $testLog | ForEach-Object { $_ | ConvertFrom-Json })
     $failed = @($events | Where-Object { $_.Action -eq 'fail' })
@@ -47,7 +59,7 @@ try {
     $passed = @{}
     foreach ($event in $events) { if ($event.Action -eq 'pass' -and $event.Test) { $passed[$event.Test] = $true } }
     $missing = @($required | Where-Object { -not $passed.ContainsKey($_) })
-    go vet -tags=release ./... 2>&1 | Set-Content -LiteralPath (Join-Path $evidence 'go-vet.log') -Encoding utf8
+    go vet -tags 'release codex_integration' ./... 2>&1 | Set-Content -LiteralPath (Join-Path $evidence 'go-vet.log') -Encoding utf8
     $vetExit = $LASTEXITCODE
     $binaryHash = (Get-FileHash -LiteralPath $acceptanceExe -Algorithm SHA256).Hash.ToLowerInvariant()
     "$binaryHash  scp.exe" | Set-Content -LiteralPath (Join-Path $evidence 'scp.exe.sha256') -Encoding utf8
@@ -67,6 +79,6 @@ try {
     foreach ($case in $cases.Keys) { $report += "| $case | $($cases[$case] -join ', ') |" }
     $report | Set-Content -LiteralPath (Join-Path $evidence 'report.md') -Encoding utf8
     if (-not $passedAll) { throw "Windows release verification failed. Evidence: $evidence" }
-    if ((git rev-parse HEAD).Trim() -ne $sourceHead -or (git status --porcelain)) { throw 'Source changed during release acceptance' }
+    if ((git rev-parse HEAD).Trim() -ne $sourceHead -or (Test-DirtySource)) { throw 'Source changed during release acceptance' }
     Write-Output "Windows release suite passed; O5 review pending: $evidence"
-} finally { $env:SCP_ACCEPTANCE_EXE = $previousAcceptanceExe; Pop-Location }
+} finally { $env:SCP_ACCEPTANCE_EXE = $previousAcceptanceExe; $env:SCP_CODEX_EVIDENCE = $previousCodexEvidence; Pop-Location }

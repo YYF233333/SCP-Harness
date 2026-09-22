@@ -80,6 +80,12 @@ type Synth struct {
 	Operation string `json:"operation"`
 	Text      string `json:"text"`
 }
+type Discussion struct {
+	Version   int    `json:"schema_version"`
+	Operation string `json:"operation"`
+	Text      string `json:"text"`
+}
+
 type Result struct {
 	Disposition, Verdict, Text string
 	Findings                   []string
@@ -135,6 +141,16 @@ func Parse(data []byte, operation string, cap int64) (Result, error) {
 		}
 		version, op = v.Version, v.Operation
 		r.Groups = v.Groups
+	case "discussion":
+		var v Discussion
+		if e := config.Strict(data, &v); e != nil {
+			return invalid(e)
+		}
+		version, op = v.Version, v.Operation
+		r.Text = v.Text
+		if strings.TrimSpace(v.Text) == "" {
+			return invalid("empty discussion text")
+		}
 	case "merge_synth":
 		var v Synth
 		if e := config.Strict(data, &v); e != nil {

@@ -134,11 +134,33 @@ Use the fixed, previously accepted controller (`scp.exe`) for normal work.
 .\scp.exe --config .\scp.json run
 ```
 
-Initial exploration creates zero-funded Options once. From another terminal,
-inspect `option list --task <id>` and explicitly `option allocate <id> --wall-ms N`.
-The scheduler is serial and retains a mutation/test/review/promotion chain until
-it ends or must pause. A successful promotion leaves the Option OPEN.
-Use explicit `option close` and `task close` for semantic completion.
+Initial exploration creates inert candidate Options once, then the scheduler idles.
+Use this daily workflow from another terminal:
+
+```text
+option list --task TASK_ID
+option thread OPTION_ID
+option discuss OPTION_ID --text "Why this plan? What are the risks?"
+option thread OPTION_ID
+option comment OPTION_ID --text "Additional context"
+option refine OPTION_ID --text "Final plan"
+option allocate CHILD_ID --wall-ms 7200000
+option release CHILD_ID
+```
+
+`discuss` queues one bounded readonly reply; normal `scp run` executes it. `comment`
+only adds information and works during an active chain. `refine` creates an immutable
+child and defaults to zero transfer; `propose` creates a fresh candidate.
+**Allocate alone never starts work.** Release requires option.release and approves
+one chain through continuation, tests, review, rework and promotion. Promotion leaves
+the Option OPEN but idle; another cycle requires another release. DROP/crash/timeout/
+interrupt also ends authorization. Recover never infers release from old balances.
+
+Discuss requires option.discuss + claim.publish and Task-root budget, even for an
+unfunded Option. It is blocked by a Task's active/pending chain. To redirect active
+work: comment, optionally interrupt, wait for settlement, discuss, refine/propose,
+allocate, release. Refine/split/merge participants in Pending are blocked; allocate
+may replenish an existing chain. Use option close / task close for completion.
 
 `--json` emits one JSON envelope. Logs go to stderr. The complete command list,
 projections, error codes and capability matrix are frozen in specification §36.
@@ -150,7 +172,7 @@ to capture and settle. `task suspend <id>` also cancels pending work and release
 the repository. `task resume <id>` observes the current ref while preserving old
 provenance. Task close retires every remaining account balance exactly once.
 
-Task lifecycle changes, Option close and qualifying `fulfilled` Claims share one
+Task lifecycle changes, Option release/discuss/close and qualifying `fulfilled` Claims share one
 non-waiting Core control gate per database and Task ID. Contention
 returns `BLOCKED`; it is not retried. The Windows gate uses atomic creation of a
 named kernel mutex and retains only the first creator's non-inheritable handle;
@@ -211,3 +233,23 @@ Pass `none` only after reviewing normative conformance as well as tests; otherwi
 pass the remaining failures. Unsupported release hosts fail rather than skip or
 substitute mocks. Daily Linux evidence is recorded separately and must not be
 inferred from the Windows release result.
+
+### Enabling discussion in an existing deployment
+
+Upgrade configuration to six operation profiles using scp.example.json; add the
+minimal discussion card and the O5 option.release/option.discuss capabilities.
+Existing funded Options without Pending remain safely idle; do not release them
+as part of migration. Existing valid Pending chains may recover and finish.
+
+With the normal scheduler stopped, run scripts/enable-codex-discussion.py as root
+inside SCP-Worker (pipe its bytes to `wsl -d SCP-Worker -u root --exec python3 -`).
+It adds the discussion operation, binding and prompt to /opt/scp-workers/codex-v0
+without changing credentials or runtime isolation. Use the installed
+/opt/scp-workers/codex-worker executable for the discussion profile. The release
+acceptance script requires the real authenticated bundle and runs its model tests;
+there is no skip/fake fallback for those cases.
+
+Release source admission permits pre-existing untracked docs/reports/*.md, *.zip and
+*.sha256 report outputs and their directory-local .gitattributes; tracked edits and all other untracked files are rejected.
+WSL package tests run sequentially (-p=1) because both distros are shared execution
+resources. The accepted controller is not replaced by acceptance.

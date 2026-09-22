@@ -37,6 +37,12 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 	if e = os.MkdirAll(contextRoot, 0700); e != nil {
 		return nil, artifact.StorageError("context directory", e)
 	}
+	if a.Operation == "discussion" {
+		instruction := "Answer the current human question using the Option and ordered discussion. Give a reviewable conclusion, a summary of reasons, risks and recommendations; do not output hidden chain-of-thought. Do not claim to have modified the Option or code. Describe proposed refinements only; O5 decides whether to refine."
+		if e = os.WriteFile(filepath.Join(contextRoot, "discussion-instruction.txt"), []byte(instruction), 0600); e != nil {
+			return nil, artifact.StorageError("discussion instruction", e)
+		}
+	}
 	base := a.SHA
 	source := ""
 	var submitted *model.Artifact

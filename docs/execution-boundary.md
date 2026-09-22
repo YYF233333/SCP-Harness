@@ -42,7 +42,7 @@ does not apply to it.
 ## Installed Codex worker
 
 The standalone installation bundle is maintained under the ignored
-`.local/codex-real-worker-v0/` work package, outside Core. All five operations use:
+`.local/codex-real-worker-v0/` work package, outside Core. All six operations use:
 
 ```text
 codex exec --dangerously-bypass-approvals-and-sandbox
@@ -81,3 +81,19 @@ It uses synthetic fixtures through real Core and both WSL distros. It does not
 create a self-hosting Task or replace the accepted controller. The OS tests use
 the existing installed PE probe from Windows release isolation validation.
 Windows release acceptance remains a separate reviewed-source validation layer.
+
+## Discussion boundary amendment
+
+Discussion uses the same bounded worker execution and mandatory termination, with
+workspace=readonly and synthetic_git=false. Its resource anchor is Task root; its
+semantic target remains the Option. Core never captures a discussion Artifact.
+The minimal card has repository.read/process.execute/claim.publish and no write,
+release, allocation or governance capability. The installed external bundle gains
+only an operation registry entry, Explorer-equivalent model binding and strict
+answer prompt via scripts/enable-codex-discussion.py. Provider sandbox/approval
+profiles, credential handling and volatile HOME remain unchanged.
+
+Windows final acceptance explicitly runs the real Codex discussion/readonly probe,
+no-auto-release polling, explicit mutation release, protected test/review/promotion
+and idle-after-promotion checks. It includes the existing SCP-Worker/SCP-Test OS
+boundary tests and the shared 8 GiB WSL limit check.

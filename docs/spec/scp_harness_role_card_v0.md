@@ -88,3 +88,18 @@ No CPU/token/tool-call limit is part of v0 Core.
 ## 7. Runtime identity
 
 Workers cannot self-issue or select cards. `actor_instance` and role card are selected by Core from the configured worker profile; worker result cannot override issuer/capabilities/context/limits.
+
+## 8. Human-in-the-loop amendment (2026-09-22)
+
+The closed capability registry includes unscoped `option.release` and
+`option.discuss`. The host O5/operator card owns both; normal worker cards never
+receive option.release. Release is available only through the host CLI/Core method,
+not worker outputs or Claims. Discussion also requires claim.publish.
+
+The sixth operation, discussion, has a separate readonly profile with
+synthetic_git=false. Its minimal card contains task.objective, task.state,
+option.target, option.lineage.direct, claim.related and ledger.resource; capabilities
+are claim.publish, repository.read(scope=task.repository) and
+process.execute(scope=lease.sandbox). Its lease is anchored to Task root even if
+the target Option has no allocation. It receives no write, allocation, release,
+review or completion capabilities. Example: testdata/cards/discussion.json.

@@ -42,6 +42,7 @@ func TestCodexExecutionBoundary(t *testing.T) {
 	objective := `CONTEXT-boundary-v1. Implement greet(name) by stripping whitespace and returning 'Hello, <name>!' or 'Hello, world!' for blank input.
 For option_generation, propose exactly one direction: direct whitespace stripping with a fallback name. For every workspace=none operation, first run a shell check that SCP_WORKSPACE does not exist and print SCP_NONE_OK; never create a workspace.
 For mutation, implement greeting.py, run python3 -B -m unittest -v, compile greeting.py with py_compile output under TMPDIR, and run python3 -B boundary_probe.py. Keep the fixture tests and probe unchanged; submit PROMOTE_FINAL when they pass.
+For discussion, read the human question and source, run python3 -B boundary_probe.py and verify SCP_READONLY_OK, then answer with reasons, risks and recommendation.
 For review, read every candidate file and protected-test evidence, run python3 -B -m unittest -v, and run python3 -B boundary_probe.py. The probe is an authorized OS boundary test: it must actively attempt opening input/context/candidate paths for write and observe EACCES. It is not a request to implement changes. Verify its SCP_READONLY_OK output before giving a verdict.`
 	task, e := c.CreateTask(context.Background(), objective, repo, "refs/heads/main", c.Operator().ID, 7200000)
 	if e != nil {
@@ -62,6 +63,27 @@ For review, read every candidate file and protected-test evidence, run python3 -
 		t.Fatal(e)
 	}
 	if _, e = c.Allocate(option.ID, 2400000); e != nil {
+		t.Fatal(e)
+	}
+	assertIdleRun(t, engine)
+	if fixtureGit(t, repo, "rev-parse", "HEAD") != task.SHA {
+		t.Fatal("H1 authoritative repo changed")
+	}
+	t.Log("H1 PASS: funded Option stayed idle with real scheduler")
+	if _, e = c.DiscussOption(option.ID, "Why direct whitespace stripping? Read source and run the readonly boundary probe; summarize risks and your recommendation without changing files."); e != nil {
+		t.Fatal(e)
+	}
+	step(t, engine)
+	checkCodexAttempt(t, engine, "discussion", "SCP_READONLY_OK {")
+	thread, e := c.OptionThread(option.ID)
+	if e != nil || len(thread.Messages) != 2 || thread.Messages[1].Type != "discussion.reply" {
+		t.Fatal("real Codex discussion reply", e)
+	}
+	if s := state(t, c); len(s.Artifacts) != 0 || len(s.Pending) != 0 || fixtureGit(t, repo, "rev-parse", "HEAD") != task.SHA {
+		t.Fatal("H2 discussion changed authority")
+	}
+	t.Log("H2 PASS: real Codex discussion reply; readonly OS boundary; no Artifact; no release")
+	if _, e = c.ReleaseOption(option.ID); e != nil {
 		t.Fatal(e)
 	}
 	step(t, engine)
@@ -107,7 +129,33 @@ For review, read every candidate file and protected-test evidence, run python3 -
 	if e != nil || string(blob) != string(after) {
 		t.Fatal("candidate Artifact changed", e)
 	}
-	t.Logf("PASS: six model invocations; mutation captured; protected test PASS; readonly review APPROVE; Artifact unchanged")
+	step(t, engine) // Commit the first approved Artifact through production CAS.
+	firstSHA := state(t, c).Tasks[task.ID].SHA
+	if firstSHA == task.SHA {
+		t.Fatal("H3 first promotion missing")
+	}
+	assertIdleRun(t, engine)
+	t.Log("H3 PASS: explicit host release started the real mutation chain")
+	if _, e = c.ReleaseOption(option.ID); e != nil {
+		t.Fatal(e)
+	}
+	step(t, engine)
+	checkCodexAttempt(t, engine, "mutation", "")
+	if p := state(t, c).Pending[task.ID]; p == nil || p.Operation != "protected_test" {
+		t.Fatal("second cycle did not submit")
+	}
+	step(t, engine)
+	step(t, engine)
+	checkCodexAttempt(t, engine, "review", "SCP_READONLY_OK {")
+	if p := state(t, c).Pending[task.ID]; p == nil || p.Operation != "promotion" {
+		t.Fatal("second cycle not approved")
+	}
+	step(t, engine)
+	if s := state(t, c); s.Tasks[task.ID].SHA == firstSHA || s.Options[option.ID].Status != "OPEN" || s.Options[option.ID].Remaining <= 0 {
+		t.Fatal("second promotion")
+	}
+	assertIdleRun(t, engine)
+	t.Log("H4 PASS: one release per chain; two real promotions; no automatic second cycle")
 }
 
 func checkCodexAttempt(t *testing.T, engine *Scheduler, operation, evidence string) {

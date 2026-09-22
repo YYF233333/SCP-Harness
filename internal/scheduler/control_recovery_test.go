@@ -59,6 +59,9 @@ func testControlExitRecovery(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 120000); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	// There is no live execution owner to hide a missing recovery/control gate.
 	before := state(t, c)
 	unlock, e := c.LockTaskControl(task.ID)
@@ -164,9 +167,15 @@ func testControlExitRecovery(t *testing.T) {
 		}
 	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "success-worker"}
+	if ran, e := engine.Step(context.Background()); e != nil || ran {
+		t.Fatal("recovery invented release", e)
+	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	step(t, engine)
 	if len(state(t, c).Attempts) != len(s.Attempts)+1 {
-		t.Fatal("explicit recovery did not restore dispatch")
+		t.Fatal("new explicit release after recovery did not dispatch")
 	}
 	t.Logf("Control crash/recovery verified with actual executable: %s", executable)
 }

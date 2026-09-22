@@ -27,6 +27,9 @@ func testRunningSchedulerControl(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 80000); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "vorton"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

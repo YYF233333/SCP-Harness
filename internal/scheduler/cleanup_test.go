@@ -58,6 +58,9 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 				if _, e = c.Allocate(o.ID, 80000); e != nil {
 					t.Fatal(e)
 				}
+				if _, e = c.ReleaseOption(o.ID); e != nil {
+					t.Fatal(e)
+				}
 				script := poisonScript(kind, limits) + "import json\nwith open(os.environ['SCP_RESULT'],'w') as f: json.dump(dict(schema_version=0,operation='mutation',disposition='DROP_FINAL',claims=[],new_options=[]),f)\n"
 				c.Config.Workers[0].Command = []string{"python3", "-c", script}
 				step(t, engine)
@@ -94,6 +97,9 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 					t.Fatal(e)
 				}
 				if _, e = c.Allocate(fresh.ID, 60000); e != nil {
+					t.Fatal(e)
+				}
+				if _, e = c.ReleaseOption(fresh.ID); e != nil {
 					t.Fatal(e)
 				}
 				step(t, engine)

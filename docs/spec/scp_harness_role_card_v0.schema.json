@@ -64,6 +64,8 @@
                   "option.split",
                   "option.merge",
                   "option.allocate",
+                "option.release",
+                "option.discuss",
                   "option.complete",
                   "claim.publish",
                   "resource.propose",

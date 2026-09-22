@@ -1,0 +1,29 @@
+{
+  "schema_version": 0,
+  "id": "discussion",
+  "context": [
+    "task.objective",
+    "task.state",
+    "option.target",
+    "option.lineage.direct",
+    "claim.related",
+    "ledger.resource"
+  ],
+  "capabilities": [
+    {
+      "name": "claim.publish"
+    },
+    {
+      "name": "repository.read",
+      "scope": "task.repository"
+    },
+    {
+      "name": "process.execute",
+      "scope": "lease.sandbox"
+    }
+  ],
+  "limits": {
+    "lease.wall_ms": 600000
+  },
+  "influence": {}
+}

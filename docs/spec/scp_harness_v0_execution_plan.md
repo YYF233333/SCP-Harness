@@ -348,7 +348,7 @@ destination.remaining += N
 
 ### 8.4 Refine / split / merge resource semantics
 
-`refine(parent -> child)`：child resource parent = parent Option account；调用者显式指定 `transfer_wall_ms`，范围 `0..parent.remaining`。旧 Option 不关闭。
+`refine(parent -> child)`：child resource parent = parent Option account；`transfer_wall_ms` 可省略，默认为 0；显式值范围 `0..parent.remaining`。旧 Option 不关闭，零转账不改变 parent balance，child balance=0。
 
 `split(parent -> children[])`：每个 child resource parent = parent Option account；每个 child 显式指定 allocation。原子事务必须满足：
 
@@ -406,7 +406,8 @@ Core crash 或无法确定精确计量：charge full outstanding lease。
 
 固定规则：
 
-- Option-target single-route work：该 Option；
+- discussion：Task root（即使 target=OPTION 且 Option allocation=0）；
+- Option-target mutation：该 Option；
 - Artifact-target work：Artifact 的 `semantic_anchor_option_id`；
 - Task-level/new-route exploration：Task root；
 - cross-Option compare / MergeJudge / MergeSynth：participant resource accounts 的 resource-tree LCA；
@@ -435,7 +436,7 @@ v0 使用**一个全局 execution slot**。这比单纯 `global_active_attempt_c
 
 Scheduler 不得创建 worker pool、parallel worker goroutine、async task graph 或预实现 future concurrency。内部为了 process I/O/timeout/cancellation 使用必要 goroutine 可以存在，但不得造成两个 execution activity 同时运行。
 
-Scheduler 使用最简单 deterministic FIFO / round-robin。Allocation 大小不得自动作为 priority。
+Scheduler 按 Task 的 created_at,id 检查既有 Pending，再执行一次性 initial exploration，否则 idle。Allocation 不授予执行 authority，也不影响 priority。
 
 ## 10. Role card 与 capability registry
 
@@ -480,6 +481,8 @@ option.refine
 option.split
 option.merge
 option.allocate
+option.release
+option.discuss
 option.complete
 claim.publish
 resource.propose
@@ -509,6 +512,8 @@ process.execute
 - Option refine -> `option.refine`
 - Option split -> `option.split`
 - Option merge / MergeSynth creation -> `option.merge`
+- Option host release -> `option.release`
+- Option discussion request -> `option.discuss` + `claim.publish`
 - Option resource allocation -> `option.allocate`
 - Option close / qualifying fulfilled decision -> `option.complete`
 - arbitrary informational Claim -> `claim.publish`
@@ -597,7 +602,7 @@ Worker 只需要读取 input/context/workspace，执行任意操作，可选写 
 {
   "schema_version": 0,
   "attempt_id": "128-bit-hex",
-  "operation": "mutation|review|option_generation|merge_judge|merge_synth",
+  "operation": "mutation|review|option_generation|merge_judge|merge_synth|discussion",
   "objective": "string",
   "target": {"type": "TASK|OPTION|ARTIFACT", "id": "string"},
   "semantic_anchor": {"option_id": "string"},
@@ -611,7 +616,7 @@ Worker 只需要读取 input/context/workspace，执行任意操作，可选写 
     "source_artifact_id": "string-or-empty",
     "synthetic_git": false
   },
-  "output_schema": "mutation|review|option_generation|merge_judge|merge_synth"
+  "output_schema": "mutation|review|option_generation|merge_judge|merge_synth|discussion"
 }
 ```
 
@@ -723,6 +728,21 @@ invalid result -> 不创建 merged Option。
 ### 14.6 Partial child-operation failure
 
 顶层 result schema 合法时，内部每个 Claim/new Option request 仍单独做 capability、subject 和 invariant 验证。无权限/无效的 child request 被拒绝并 audit，不得因此获得 authority；其他彼此独立且合法的 child request 可以提交。任何会破坏 ledger/state invariant 的组合必须整笔 transaction rollback。
+
+### 14.7 discussion
+
+```json
+{"schema_version":0,"operation":"discussion","text":"non-empty response"}
+```
+
+Strict typed schema: unknown/duplicate/missing/null keys, blank text, wrong type,
+version or operation are SCHEMA_INVALID. No claims/new_options/release/allocation/
+patch/verdict fields. RETURNED + valid + claim.publish creates exactly one
+informational discussion.reply on the target Option, with Core-bound Attempt issuer
+and created_against. Invalid/crash/timeout/interrupt creates no reply and ends the
+request without retry; the human comment remains. No Artifact, Option changes,
+resource transfers or mutation follows. Infrastructure blockers preserve the exact
+pending step for explicit repair/resolve, as for other operations.
 
 ## 15. WSL Runner
 
@@ -960,11 +980,11 @@ worker result 中若有 Task `fulfilled` Claim：只有 issuer actor 有 `task.c
 
 ## 33. Option operations
 
-实现 propose、refine、split、merge、allocate、close。所有语义变换创建新 Option；已有 Option text/provenance 不修改。
+实现 propose、refine、split、merge、allocate、release、comment、discuss、thread、close。所有语义变换创建新 Option；已有 Option text/provenance 不修改。
 
 `propose`：actor 需要 `option.propose`；创建 OPEN Option。若是 Task root proposal，resource parent=Task root；若显式从同 Task 的 source Option 派生，resource parent=source Option account，semantic edge relation=`propose`。初始 allocation=0。
 
-`refine`：actor 需要 `option.refine`；创建 OPEN child Option，semantic edge relation=`refine`，resource parent=parent Option account；资源按第 8.4 节显式 transfer。旧 Option 保持原 status。
+`refine`：actor 需要 `option.refine`；创建 OPEN child Option，semantic edge relation=`refine`，resource parent=parent Option account；资源按第 8.4 节 transfer；省略 --transfer-wall-ms 时为 0。旧 Option 保持原 status。
 
 `split`：actor 需要 `option.split`；一次 transaction 创建 >=2 个 OPEN child Options，relation=`split`，按第 8.4 节分配真实余额；parent 不自动 close。
 
@@ -1104,7 +1124,10 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 #### 36.1.3 Command -> data mapping
 
 - `task create/extend/suspend/resume/close/show` -> `TaskJSON`；
-- `option show/propose/refine/merge/allocate/close` -> `OptionJSON`；
+- `option show/propose/refine/merge/allocate/release/close` -> `OptionJSON`；
+- `option comment` -> `ClaimJSON`；
+- `option discuss` -> `{"comment":ClaimJSON,"queued":true}`（success queued 必须 exactly true）；
+- `option thread` -> `{"option":OptionJSON,"messages":[ClaimJSON...]}`；
 - `option split` -> `{"parent":OptionJSON,"children":[OptionJSON...]}`；
 - `option/attempt/artifact/claim/blocker list` -> `{"items":[<对应 JSON type>...]}`；
 - `attempt show/interrupt` -> `AttemptJSON`；
@@ -1139,10 +1162,14 @@ scp task show TASK_ID
 scp option list --task TASK_ID [--status OPEN|CLOSED]
 scp option show OPTION_ID
 scp option propose --task TASK_ID --text TEXT [--source OPTION_ID]
-scp option refine OPTION_ID --text TEXT --transfer-wall-ms N
+scp option refine OPTION_ID --text TEXT [--transfer-wall-ms N]
 scp option split OPTION_ID --spec FILE
 scp option merge --task TASK_ID --spec FILE
 scp option allocate OPTION_ID --wall-ms N
+scp option release OPTION_ID
+scp option comment OPTION_ID --text TEXT
+scp option discuss OPTION_ID --text TEXT
+scp option thread OPTION_ID
 scp option close OPTION_ID
 
 scp attempt list [--task TASK_ID]
@@ -1196,15 +1223,15 @@ Scheduler lock 使用 atomic creation of `run.lock` directory。正常退出删�
 
 ### 37.1 Runnable definition and precedence
 
-某个 operation runnable 当且仅当：其 Task=ACTIVE；相关 Option（如有）=OPEN；所需 resource anchor 有足够 positive balance 形成本步 lease；相关 scope 无 unresolved blocker；global fail-stop=false；required authoritative resource/precondition 当前满足。allocation=0 的 Option 不是 runnable。
+某个 operation runnable 当且仅当：其 Task=ACTIVE；相关 Option（如有）=OPEN；所需 resource anchor 有足够 positive balance 形成本步 lease；相关 scope 无 unresolved blocker；global fail-stop=false；required authoritative resource/precondition 当前满足。Option mutation 需要既有 Pending 且 Option account 有余额；discussion 使用 Task root，允许 Option allocation=0。仅 funded 不产生 Pending。
 
 全局只允许一个 execution slot。选择优先级固定为：
 
-1. 当前已存在、且可以立即继续的 mutation/review/promotion chain next step；
-2. ACTIVE Task 的一次性 initial exploration chain；
-3. 普通 OPEN + funded Option mutation。
+1. 已存在且可执行的 Pending chain/discussion next step（包括 host release 创建的 initial mutation）；
+2. ACTIVE Task 的一次性 initial exploration；
+3. idle。
 
-普通 Option 使用 deterministic round-robin：候选集合先按 `created_at,id` 固定基序；一个 Option 完成/终止一条 chain 后移动到该轮尾部。实现如何持久化 cursor 属于 implementation-defined，但进程重启后不得退化成随机/SQLite row order。allocation 大小不影响 priority。
+不得扫描 OPEN/funded Options 并构造 mutation。No Option can start a mutation chain without explicit host option.release.
 
 若 pending next step 只因余额不足或 unresolved scoped blocker 暂时不可执行，release execution slot，但保留该 pending step；allocation 增加或 blocker 显式 resolve 后，从**同一个 next step/Artifact target**继续，不得悄悄改成新的 authoritative-state mutation。Task suspend/close 则取消该 Task 的 pending chain，历史 Artifact/Claim 保留。
 
@@ -1218,9 +1245,9 @@ Scheduler lock 使用 atomic creation of `run.lock` directory。正常退出删�
 4. 对 verified partition，按 MergeJudge 输出 group 顺序处理：size=1 的 group 直接以该 raw Option 作为 canonical working option，不调用 MergeSynth；size>=2 的 group exactly one `merge_synth`，按第 14.5 节创建 zero-allocation merged Option；单个 synth invalid 只影响该 group；
 5. initial exploration 完成后该 marker 永久结束，不因重启再次运行。`N` 只决定独立 fresh generation Attempt 次数，不 mint 资源；每次 Attempt 都受 Task root 余额和 role-card lease limit 约束。
 
-CLI `option propose` 创建的后续人工 Option **不会自动重新触发全 Task dedup**；v0 不提供持续后台 dedup。它们可直接 allocation/execution。
+CLI `option propose` 创建的后续人工 Option **不会自动重新触发全 Task dedup**；v0 不提供持续后台 dedup。它们是 inert candidates；allocation 后仍需 host option release。
 
-Initial exploration/dedup 不自动分配 Option budget。完成后若没有 funded Option，scheduler idle/sleep，等待 operator `option allocate/merge/refine/split` 等授权动作。
+Initial exploration/dedup 不自动分配 Option budget。完成后 scheduler idle/sleep，无论 Option 是否 funded；等待 operator `option release` 或 `option discuss` 创建 Pending。
 
 ### 37.3 Mutation/review/promotion transition table
 
@@ -1228,10 +1255,10 @@ Initial exploration/dedup 不自动分配 Option budget。完成后若没有 fun
 
 | Current condition / result | Mechanical next step | Chain semantics |
 | --- | --- | --- |
-| funded OPEN Option selected, no pending chain | `mutation(target=Option, base=current authoritative SHA)` | start chain |
+| explicit host option release succeeds, no pending chain | `mutation(target=Option, base=current authoritative SHA)` | start chain |
 | mutation returns `CONTINUE_FINAL` | capture Artifact A -> next `mutation(target=A)` | retain chain; fresh workspace from A |
 | mutation returns `PROMOTE_FINAL` | capture Artifact A -> protected test(A) | retain chain |
-| mutation returns `DROP_FINAL`, missing/invalid result, ordinary CRASHED/TIMED_OUT/INTERRUPTED | capture writable Artifact if possible -> no next step | end chain; Option remains OPEN; next future mutation starts from authoritative state |
+| mutation returns `DROP_FINAL`, missing/invalid result, ordinary CRASHED/TIMED_OUT/INTERRUPTED | capture writable Artifact if possible -> no next step | end chain; Option remains OPEN; no automatic retry; another cycle requires host option release |
 | protected test completes normally, exit=0 | reviewer(A, test=PASS) | retain chain |
 | protected test completes normally with nonzero exit or test timeout | reviewer(A, test=FAIL/TIMEOUT) | retain chain; Artifact is mechanically non-promotable in this cycle |
 | protected test runner infrastructure failure | create blocker per §38A | preserve pending test/review chain; release slot until explicit resolve |
@@ -1239,14 +1266,14 @@ Initial exploration/dedup 不自动分配 Option budget。完成后若没有 fun
 | reviewer `REJECT` | fresh `mutation(target=A)` rework | retain chain; rejection/findings supplied as facts |
 | reviewer `APPROVE` and protected test=PASS | promotion(A) | retain chain |
 | reviewer `APPROVE` but protected test!=PASS | fresh `mutation(target=A)` rework | effective mechanical reject reason=`PROTECTED_TEST_FAILED`; reviewer approval cannot override protected runner failure |
-| promotion CAS succeeds | update journal/APPLIED; Task authoritative SHA=new SHA | end chain; Option remains OPEN and moves to RR tail; promotion != completion |
-| promotion precondition changed | record `PRECONDITION_CHANGED`; no repo write | end chain; Option OPEN; future work starts from current authoritative state |
+| promotion CAS succeeds | update journal/APPLIED; Task authoritative SHA=new SHA | end chain; Option remains OPEN; Pending deleted; idle until another explicit release; promotion != completion |
+| promotion precondition changed | record `PRECONDITION_CHANGED`; no repo write | end chain; Option OPEN; another explicit release required; future work uses current authoritative state |
 | any next step lacks enough resource | no execution | release slot; retain exact pending step until explicit allocation/extend or Task suspend/close |
 | scoped infrastructure blocker during worker/review/promotion | record blocker | release slot; retain exact pending step until explicit resolve unless Task suspended/closed |
 
 A reviewer is always given the protected test result. Normal test failure is **not** an infrastructure blocker. Promotion requires the conjunction `protected_test == PASS && review == APPROVE && CAS precondition holds`.
 
-After successful promotion, Scheduler may later select the still-OPEN Option again for another mutation cycle if budget remains；复杂 Option 因此可以有多个 promotion cycle。只有 qualifying `option.complete`/Task completion 才结束 semantic work。
+After successful promotion, Pending is deleted. Option remains OPEN and funded but idle; another mutation cycle requires a new explicit host `option release`. Review APPROVE only authorizes promotion of the current Artifact.
 
 ### 37.4 Chain cancellation
 
@@ -1407,65 +1434,96 @@ wrapper/executable 若知道自身基础设施不可用，可使用 reserved exi
 ```json
 {
   "schema_version": 0,
-  "database": "C:/scp/state/scp.db",
-  "artifact_store": "C:/scp/state/artifacts",
+  "database": ".local/example/scp.db",
+  "artifact_store": ".local/example/artifacts",
   "operator_actor_card": "O5-1",
   "role_cards": {
-    "O5-1": "C:/scp/cards/o5.json",
-    "operator": "C:/scp/cards/operator.json",
-    "reviewer": "C:/scp/cards/reviewer.json",
-    "merge": "C:/scp/cards/merge.json"
+    "O5-1": "testdata/cards/O5-1.json",
+    "operator": "testdata/cards/operator.json",
+    "reviewer": "testdata/cards/reviewer.json",
+    "merge": "testdata/cards/merge.json",
+    "discussion": "testdata/cards/discussion.json"
   },
   "wsl": {
     "distro": "SCP-Worker",
+    "test_distro": "SCP-Test",
     "attempt_root": "/scp/attempt"
   },
   "exploration": {
-    "initial_option_generation_attempts": 2
+    "initial_option_generation_attempts": 1
   },
   "limits": {
-    "workspace_max_files": 100000,
-    "workspace_max_bytes": 10737418240,
-    "single_file_max_bytes": 1073741824,
-    "path_max_bytes": 4096,
-    "stdout_max_bytes": 16777216,
-    "stderr_max_bytes": 16777216,
+    "workspace_max_files": 10000,
+    "workspace_max_bytes": 104857600,
+    "single_file_max_bytes": 16777216,
+    "path_max_bytes": 240,
+    "stdout_max_bytes": 1048576,
+    "stderr_max_bytes": 1048576,
     "result_max_bytes": 1048576,
-    "git_export_max_bytes": 10737418240,
-    "external_process_timeout_ms": 1800000
+    "git_export_max_bytes": 134217728,
+    "external_process_timeout_ms": 60000
   },
   "protected_test": {
-    "command": ["go", "test", "./..."],
-    "timeout_ms": 1800000,
-    "output_limit_bytes": 33554432
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "timeout_ms": 60000,
+    "output_limit_bytes": 1048576
   },
   "workers": [
     {
       "id": "operator",
-      "command": ["/opt/scp-workers/operator"],
+      "command": [
+        "/opt/scp-workers/operator"
+      ],
       "actor_card": "operator",
-      "timeout_ms": 1800000,
+      "timeout_ms": 60000,
       "workspace": "writable",
       "synthetic_git": true,
-      "unavailable_exit_codes": [75]
+      "unavailable_exit_codes": [
+        75
+      ]
     },
     {
       "id": "reviewer",
-      "command": ["/opt/scp-workers/reviewer"],
+      "command": [
+        "/opt/scp-workers/reviewer"
+      ],
       "actor_card": "reviewer",
-      "timeout_ms": 900000,
+      "timeout_ms": 60000,
       "workspace": "readonly",
       "synthetic_git": false,
-      "unavailable_exit_codes": [75]
+      "unavailable_exit_codes": [
+        75
+      ]
     },
     {
       "id": "merge",
-      "command": ["/opt/scp-workers/merge"],
+      "command": [
+        "/opt/scp-workers/merge"
+      ],
       "actor_card": "merge",
-      "timeout_ms": 300000,
+      "timeout_ms": 60000,
       "workspace": "none",
       "synthetic_git": false,
-      "unavailable_exit_codes": [75]
+      "unavailable_exit_codes": [
+        75
+      ]
+    },
+    {
+      "id": "discussion",
+      "command": [
+        "/opt/scp-workers/discussion"
+      ],
+      "actor_card": "discussion",
+      "timeout_ms": 60000,
+      "workspace": "readonly",
+      "synthetic_git": false,
+      "unavailable_exit_codes": [
+        75
+      ]
     }
   ],
   "operation_profiles": {
@@ -1473,7 +1531,8 @@ wrapper/executable 若知道自身基础设施不可用，可使用 reserved exi
     "review": "reviewer",
     "option_generation": "merge",
     "merge_judge": "merge",
-    "merge_synth": "merge"
+    "merge_synth": "merge",
+    "discussion": "discussion"
   }
 }
 ```
@@ -1490,8 +1549,8 @@ Normative validation：
 - worker id 唯一，command 非空，actor_card 必须存在；
 - workspace 只允许 `none|readonly|writable`；
 - unavailable exit code 必须 1..255，且同 profile 内唯一；
-- `operation_profiles` 必须恰好包含上面五个 operation key，并引用存在的 worker；
-- mutation profile 必须 writable；review profile 必须 readonly；merge/option generation profile 必须 none；
+- `operation_profiles` 必须恰好包含上面六个 operation key，并引用存在的 worker；
+- mutation profile 必须 writable；review/discussion profile 必须 readonly；discussion synthetic_git 必须 false；merge/option generation profile 必须 none；
 - protected test command 非空且 timeout/output limit >0。
 
 示例中的具体 limit 数值不是产品默认值；生产配置必须显式包含它们。Core 不提供隐式 unlimited/default budget。
@@ -1628,7 +1687,7 @@ go vet ./...
 
 ### Phase 6 — Scheduler
 
-建议实现 global execution slot、FIFO/round-robin、runnable check、resource lease、worker execution。
+实现 global execution slot、Pending-first deterministic scheduling、runnable check、resource lease、worker execution。
 
 **Acceptance A6**：多个 Option 可连续自动执行；任意时刻 execution activity <=1；interrupt 可 out-of-band 终止当前 Attempt，但下一 activity 必须等待 slot release。
 
@@ -1846,3 +1905,77 @@ SCP Harness v0 implementation complete
 ```
 
 不得以“代码已经基本完成”“主要功能可用”作为交付标准。
+
+## 48. O5 amendment — human discussion and explicit Option release (2026-09-22)
+
+RESOURCE IS NOT AUTHORITY. No Option can start a mutation chain without explicit
+host option.release. Database schema_version remains 0. No released/approved/ready
+field, Release object, special release Claim, chat/session/thread object or second
+scheduler exists. RoundRobin may remain readable for compatibility but never
+influences initial mutation dispatch.
+
+`Core.ReleaseOption(id)` / `scp option release ID` requires option.release, existing
+OPEN Option, ACTIVE Task, completed initial exploration, positive Option remaining
+resource and no Task Pending/cancellation. Fail with NOT_FOUND, INVALID_STATE,
+INSUFFICIENT_RESOURCE, BLOCKED or CAPABILITY_DENIED without repairing state. Within
+one transaction, acquire the existing nonblocking Task control gate, revalidate,
+write Pending[task]={task_id,option_id:id,operation:mutation,target_type:OPTION,
+target_id:id}, audit OPTION_RELEASED and commit before unlocking. Never hold the
+gate waiting for a SQLite transaction. Release neither reserves the execution slot
+nor starts a worker. Only normal scp run consumes the queued step.
+
+One release authorizes the entire mutation/CONTINUE/test/review/reject/rework/
+promotion chain, including resource pauses and blocker repair. Promotion, DROP,
+invalid mutation, CRASHED, TIMED_OUT, INTERRUPTED and PRECONDITION_CHANGED end the
+chain by deleting Pending. Remaining budget does not authorize a retry. Recovery
+may resume existing valid Pending chains and reconcile runtime/journals, but must
+never infer authorization from balances, including pre-upgrade funded Options.
+
+All creation paths (propose, option_generation, mutation.new_options, refine,
+split, explicit merge, merge_synth) create inert candidates. Allocate only moves
+resource. Refine preserves immutable text by creating a child; omitted
+--transfer-wall-ms means 0, parent balance/status unchanged, child balance 0.
+Explicit transfer retains ledger semantics. Refine/split/merge participants that
+belong to a Task's Pending chain return BLOCKED. Allocate may add resources to the
+active Option; close retains explicit cancellation synchronization.
+
+`option comment ID --text TEXT` requires claim.publish and creates an immutable
+informational discussion.comment with subject_type=OPTION, subject_id=ID and exact
+payload_json={"text":"non-empty text"}. Core binds issuer and current Task
+created_against. It takes no execution slot, moves no budget, creates no Pending,
+and works during execution. An already materialized Attempt need not see later
+comments. Generic Claims never create a release effect.
+
+`option thread ID` reads only discussion.comment/discussion.reply on that Option,
+ordered by created_at,id. Human output is `[time] issuer:` followed by message text;
+JSON uses the §36 projection. It creates no persistent thread object.
+
+`option discuss ID --text TEXT` requires option.discuss + claim.publish and the same
+Option/Task/exploration/no-Pending conditions as release, but requires positive
+Task-root resource, not Option allocation. Under the same Task control gate, one
+transaction creates the human comment and Pending(operation=discussion,target=
+OPTION ID,option_id=ID), audits OPTION_DISCUSSION_REQUESTED and commits. Failure
+rolls back both; it must not leave a misleading human comment. Mutation/test/review/
+promotion Pending blocks discuss. Plain comment remains available.
+
+Discussion uses the ordinary bounded worker path and global execution slot, with
+Anchor(discussion)=Task root, lease=min(root remaining, profile timeout, card lease).
+Profile is readonly with synthetic_git=false. Minimal card context: task.objective,
+task.state, option.target, option.lineage.direct, claim.related, ledger.resource.
+Capabilities: claim.publish, repository.read(scope=task.repository),
+process.execute(scope=lease.sandbox). The authoritative source snapshot is readonly;
+normal channel/capability checks still apply. No sandbox.write, release, allocate,
+task.*, review.decide or completion capability is assigned to discussion workers.
+
+Core supplies context/discussion-instruction.txt: answer the current human question
+with a reviewable conclusion, reasons summary, risks and recommendations; do not
+output hidden chain-of-thought or claim to have changed Option/code. Suggestions
+stay in the answer; O5 decides whether to refine. claim.related is sorted by
+created_at,id. Core is provider-opaque.
+
+O5/operator owns option.release and option.discuss. Ordinary worker cards do not
+own option.release. Worker results/new_options are strict and cannot carry release
+fields. Claims, review APPROVE, allocation and all creation paths cannot seed a new
+chain. The frozen walkthrough and Windows release selection include funded idle,
+human discussion, explicit release and idle after promotion, including real Codex
+workers under the existing YOLO/OS boundary.

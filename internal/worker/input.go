@@ -14,7 +14,7 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func ValidateInput(v Input, root string) error {
 	bad := func() error { return model.Err("CORE_INCONSISTENT", "cannot construct schema-valid worker input") }
-	operations := map[string]bool{"mutation": true, "review": true, "option_generation": true, "merge_judge": true, "merge_synth": true}
+	operations := map[string]bool{"mutation": true, "review": true, "option_generation": true, "merge_judge": true, "merge_synth": true, "discussion": true}
 	if v.Version != 0 || !idPattern.MatchString(v.AttemptID) || !operations[v.Operation] || v.OutputSchema != v.Operation || strings.TrimSpace(v.Objective) == "" || !idPattern.MatchString(v.Target.ID) || !shaPattern.MatchString(v.Origin.SHA) || v.Origin.Revision < 0 || v.Context.Root != root+"/context" || v.Workspace.Root != root+"/workspace" {
 		return bad()
 	}

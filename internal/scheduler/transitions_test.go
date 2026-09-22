@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"scp-harness/internal/core"
+	"scp-harness/internal/ledger"
 	"scp-harness/internal/model"
 )
 
@@ -26,6 +27,9 @@ func candidate(t *testing.T, reviewMode string) (*Scheduler, *model.Task, *model
 		t.Fatal(e)
 	}
 	if _, e = c.Allocate(o.ID, 120000); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
 		t.Fatal(e)
 	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "workspace-writer"}
@@ -156,24 +160,30 @@ func TestBlockedPendingTestResumesAndResourcePauseKeepsTarget(t *testing.T) {
 		}
 	}
 	step(t, engine)
-	// A real explicit split transfers the anchor's remaining budget to children;
-	// the pending review must wait, then resume on the same Artifact after close
-	// returns resource to its immediate parent.
+	// Semantic/resource changes are blocked during a pending chain.
 	s = state(t, c)
 	balance := s.Accounts[o.ID].Remaining
-	split, e := c.Split(o.ID, []core.Child{{Text: "holding", Wall: balance}, {Text: "zero", Wall: 0}}, false)
-	if e != nil {
+	if _, e = c.Split(o.ID, []core.Child{{Text: "holding", Wall: balance}, {Text: "zero"}}, false); model.Code(e) != "BLOCKED" {
 		t.Fatal(e)
 	}
-	ran, e = engine.Step(context.Background())
-	if e != nil || ran {
-		t.Fatal("unfunded review ran")
+	// A settled lease can exhaust a chain's budget. Only allocation resumes it.
+	if e = c.Store.Update(func(s *model.State) error {
+		id := model.ID()
+		if e := ledger.Reserve(s, id, o.ID, balance); e != nil {
+			return e
+		}
+		return ledger.Settle(s, id, balance, false)
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if ran, e = engine.Step(context.Background()); e != nil || ran {
+		t.Fatal("unfunded review ran", e)
 	}
 	s = state(t, c)
 	if s.Pending[task.ID].Operation != "review" || s.Pending[task.ID].TargetID != a.ID {
-		t.Fatal("paused review target changed")
+		t.Fatal("paused target changed")
 	}
-	if _, e = c.CloseOption(context.Background(), split.Children[0].ID); e != nil {
+	if _, e = c.Allocate(o.ID, 60000); e != nil {
 		t.Fatal(e)
 	}
 	step(t, engine)
@@ -184,7 +194,7 @@ func TestBlockedPendingTestResumesAndResourcePauseKeepsTarget(t *testing.T) {
 	step(t, engine)
 }
 func TestRepositoryDriftEndsChainWithoutBlocker(t *testing.T) {
-	engine, task, _, a := candidate(t, "fake-reviewer-approve")
+	engine, task, o, a := candidate(t, "fake-reviewer-approve")
 	c := engine.Core
 	step(t, engine)
 	step(t, engine)
@@ -198,6 +208,12 @@ func TestRepositoryDriftEndsChainWithoutBlocker(t *testing.T) {
 	}
 	if current := fixtureGit(t, task.RepoPath, "rev-parse", task.RepoRef); current != external {
 		t.Fatal("drift overwritten")
+	}
+	if ran, e := engine.Step(context.Background()); e != nil || ran {
+		t.Fatal("drift auto-retried", e)
+	}
+	if _, e := c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
 	}
 	step(t, engine)
 	s = state(t, c)

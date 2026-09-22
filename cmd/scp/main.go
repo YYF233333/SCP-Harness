@@ -38,6 +38,14 @@ func run(args []string, out, errout io.Writer) (exit int) {
 				fmt.Fprintln(errout, "INTERNAL_ERROR: encode command output:", e)
 				return 1
 			}
+		} else if thread, ok := data.(*core.OptionThread); ok {
+			for _, claim := range thread.Messages {
+				var payload struct {
+					Text string `json:"text"`
+				}
+				_ = json.Unmarshal(claim.Payload, &payload)
+				fmt.Fprintf(out, "[%s] %s:\n%s\n", claim.Created, claim.Issuer, payload.Text)
+			}
 		} else {
 			b, _ := json.MarshalIndent(data, "", "  ")
 			fmt.Fprintln(out, string(b))
@@ -117,7 +125,7 @@ func parse(f *flag.FlagSet, args []string) error {
 		return model.Err("USAGE_ERROR", "unexpected positional arguments")
 	}
 	required := map[string][]string{
-		"task.create": {"objective", "repo", "ref", "responsible-actor", "wall-ms"}, "task.extend": {"wall-ms"}, "option.list": {"task"}, "option.propose": {"task", "text"}, "option.refine": {"text", "transfer-wall-ms"}, "option.split": {"spec"}, "option.merge": {"task", "spec"}, "option.allocate": {"wall-ms"}, "artifact.export": {"out"}, "claim.create": {"task", "subject-type", "subject-id", "type"},
+		"task.create": {"objective", "repo", "ref", "responsible-actor", "wall-ms"}, "task.extend": {"wall-ms"}, "option.list": {"task"}, "option.propose": {"task", "text"}, "option.refine": {"text"}, "option.comment": {"text"}, "option.discuss": {"text"}, "option.split": {"spec"}, "option.merge": {"task", "spec"}, "option.allocate": {"wall-ms"}, "artifact.export": {"out"}, "claim.create": {"task", "subject-type", "subject-id", "type"},
 	}
 	provided := map[string]bool{}
 	f.Visit(func(v *flag.Flag) { provided[v.Name] = true })
@@ -142,7 +150,7 @@ func readSpec(path string, v any) error {
 	return nil
 }
 func execute(ctx context.Context, c *core.Core, command string, args []string) (any, error) {
-	positional := map[string]bool{"task.extend": true, "task.suspend": true, "task.resume": true, "task.close": true, "task.show": true, "option.show": true, "option.refine": true, "option.split": true, "option.allocate": true, "option.close": true, "attempt.show": true, "attempt.interrupt": true, "artifact.show": true, "artifact.export": true, "blocker.resolve": true}
+	positional := map[string]bool{"task.extend": true, "task.suspend": true, "task.resume": true, "task.close": true, "task.show": true, "option.show": true, "option.release": true, "option.comment": true, "option.discuss": true, "option.thread": true, "option.refine": true, "option.split": true, "option.allocate": true, "option.close": true, "attempt.show": true, "attempt.interrupt": true, "artifact.show": true, "artifact.export": true, "blocker.resolve": true}
 	f, id, args, e := flags(command, args, positional[command])
 	if e != nil {
 		return nil, e
@@ -229,9 +237,26 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 			return nil, e
 		}
 		return c.Propose(*task, *text, *source)
+	case "option.release", "option.thread":
+		if e = parse(f, args); e != nil {
+			return nil, e
+		}
+		if command == "option.release" {
+			return c.ReleaseOption(id)
+		}
+		return c.OptionThread(id)
+	case "option.comment", "option.discuss":
+		text := f.String("text", "", "human discussion text")
+		if e = parse(f, args); e != nil {
+			return nil, e
+		}
+		if command == "option.comment" {
+			return c.CommentOption(id, *text)
+		}
+		return c.DiscussOption(id, *text)
 	case "option.refine":
 		text := f.String("text", "", "")
-		wall := f.Int64("transfer-wall-ms", -1, "")
+		wall := f.Int64("transfer-wall-ms", 0, "optional resource transfer (default 0)")
 		if e = parse(f, args); e != nil {
 			return nil, e
 		}

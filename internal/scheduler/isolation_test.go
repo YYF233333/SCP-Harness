@@ -49,6 +49,9 @@ func Test10000CommitSyntheticHistory(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 60000); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "malicious-git-worker"}
 	card := c.Config.Cards["operator"]
 	card.Context = append(card.Context, "repository.snapshot")
@@ -138,6 +141,9 @@ func TestExecutableModeSurvivesCaptureTestReviewAndPromotion(t *testing.T) {
 		t.Fatal(e)
 	}
 	if _, e = c.Allocate(o.ID, 60000); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
 		t.Fatal(e)
 	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "executable-worker"}

@@ -73,7 +73,7 @@ func (c Card) Require(names ...string) error {
 }
 
 var Channels = []string{"task.objective", "task.state", "option.target", "option.lineage.direct", "claim.related", "artifact.metadata", "artifact.content", "test.result", "review.findings", "ledger.resource", "repository.snapshot"}
-var Capabilities = []string{"task.create", "task.extend", "task.suspend", "task.resume", "task.complete", "option.propose", "option.refine", "option.split", "option.merge", "option.allocate", "option.complete", "claim.publish", "resource.propose", "review.decide", "attempt.interrupt", "artifact.export", "repository.read", "sandbox.write", "process.execute"}
+var Capabilities = []string{"task.create", "task.extend", "task.suspend", "task.resume", "task.complete", "option.propose", "option.refine", "option.split", "option.merge", "option.allocate", "option.release", "option.discuss", "option.complete", "claim.publish", "resource.propose", "review.decide", "attempt.interrupt", "artifact.export", "repository.read", "sandbox.write", "process.execute"}
 
 func member(list []string, s string) bool {
 	for _, v := range list {
@@ -270,13 +270,13 @@ func Load(path string) (*Config, error) {
 		}
 		profiles[p.ID] = p
 	}
-	modes := map[string]string{"mutation": "writable", "review": "readonly", "option_generation": "none", "merge_judge": "none", "merge_synth": "none"}
+	modes := map[string]string{"mutation": "writable", "review": "readonly", "option_generation": "none", "merge_judge": "none", "merge_synth": "none", "discussion": "readonly"}
 	if len(c.Operations) != len(modes) {
-		return fail("exactly five operation profiles required")
+		return fail("exactly six operation profiles required")
 	}
 	for op, mode := range modes {
 		p, ok := profiles[c.Operations[op]]
-		if !ok || p.Workspace != mode {
+		if !ok || p.Workspace != mode || op == "discussion" && p.Synthetic {
 			return fail("invalid operation profile: " + op)
 		}
 	}

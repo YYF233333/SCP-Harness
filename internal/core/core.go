@@ -232,6 +232,9 @@ func (c *Core) Split(id string, children []Child, refine bool) (*SplitResult, er
 		if e != nil {
 			return e
 		}
+		if optionInPending(s, o) {
+			return model.Err("BLOCKED", "Option belongs to a pending chain")
+		}
 		var total int64
 		for _, child := range children {
 			if strings.TrimSpace(child.Text) == "" {
@@ -279,6 +282,9 @@ func (c *Core) Merge(taskID string, spec MergeSpec) (*model.Option, error) {
 			o, e := openOption(s, p.ID)
 			if e != nil {
 				return e
+			}
+			if optionInPending(s, o) {
+				return model.Err("BLOCKED", "merge participant belongs to a pending chain")
 			}
 			if o.TaskID != taskID || seen[p.ID] {
 				return model.Err("PRECONDITION_FAILED", "cross-Task/duplicate merge participant")
@@ -386,6 +392,12 @@ func closeTask(s *model.State, id string) error {
 	return nil
 }
 func addClaim(s *model.State, t *model.Task, card config.Card, kind, id, typ string, payload json.RawMessage, sha string, rev int64) (*model.Claim, error) {
+	if typ == "discussion.comment" || typ == "discussion.reply" {
+		var v discussionText
+		if e := config.Strict(payload, &v); e != nil || kind != "OPTION" || strings.TrimSpace(v.Text) == "" {
+			return nil, model.Err("SCHEMA_INVALID", "discussion requires an Option and non-empty text payload")
+		}
+	}
 	if typ == "resource.propose" {
 		if e := card.Require("claim.publish", "resource.propose"); e != nil {
 			return nil, e

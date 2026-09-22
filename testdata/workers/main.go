@@ -84,6 +84,24 @@ func main() {
 	must(e)
 	var in input
 	must(json.Unmarshal(b, &in))
+	if in.Operation == "discussion" && (mode == "success-worker" || mode == "vorton") {
+		if os.WriteFile(filepath.Join(os.Getenv("SCP_WORKSPACE"), "README.md"), []byte("changed"), 0644) == nil {
+			panic("discussion workspace writable")
+		}
+		if os.WriteFile(filepath.Join(os.Getenv("SCP_WORKSPACE"), "new.txt"), []byte("changed"), 0644) == nil {
+			panic("discussion created file")
+		}
+		mustRead := []string{"option.target.json", "claim.related.json", "discussion-instruction.txt"}
+		for _, name := range mustRead {
+			b, e := os.ReadFile(filepath.Join(os.Getenv("SCP_CONTEXT"), name))
+			must(e)
+			if len(b) == 0 {
+				panic("empty context")
+			}
+		}
+		result(map[string]any{"schema_version": 0, "operation": "discussion", "text": "Use the smallest implementation; risk: check the boundary. O5 may refine the plan."})
+		return
+	}
 	switch mode {
 	case "crash-worker":
 		write("crash.txt", "captured\n")

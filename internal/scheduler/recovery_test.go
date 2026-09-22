@@ -185,6 +185,9 @@ func testCoreCrashRecovery(t *testing.T) {
 	if _, e = c.Allocate(o.ID, 120000); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "vorton"}
 	path := saveConfig(t, c)
 	ctx, kill := context.WithCancel(context.Background())

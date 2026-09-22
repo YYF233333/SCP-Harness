@@ -109,3 +109,62 @@ func TestRoleCardMathematicalNumbersMatchJSONSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscussionProfileAndWorkerAuthority(t *testing.T) {
+	cfg, e := Load(filepath.Join("..", "..", "scp.example.json"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(cfg.Operations) != 6 || !cfg.Cards[cfg.Operator].Has("option.release") || !cfg.Cards[cfg.Operator].Has("option.discuss") {
+		t.Fatal("host authority/profile registry")
+	}
+	for _, profile := range cfg.Workers {
+		if cfg.Cards[profile.Card].Has("option.release") {
+			t.Fatal("worker has release", profile.ID)
+		}
+	}
+	p := cfg.Profile("discussion")
+	card := cfg.Cards[p.Card]
+	if p.Workspace != "readonly" || p.Synthetic || len(card.Capabilities) != 3 || !card.Has("claim.publish") || !card.Has("repository.read") || !card.Has("process.execute") {
+		t.Fatal("discussion role not minimal")
+	}
+	for _, channel := range []string{"task.objective", "task.state", "option.target", "option.lineage.direct", "claim.related", "ledger.resource"} {
+		if !card.Sees(channel) {
+			t.Fatal("missing discussion context", channel)
+		}
+	}
+	root, _ := filepath.Abs(filepath.Join("..", ".."))
+	for id, path := range cfg.RoleCards {
+		cfg.RoleCards[id] = filepath.Join(root, path)
+	}
+	base, _ := json.Marshal(cfg)
+	for _, kind := range []string{"missing", "synthetic", "writable"} {
+		t.Run(kind, func(t *testing.T) {
+			var changed Config
+			if e := json.Unmarshal(base, &changed); e != nil {
+				t.Fatal(e)
+			}
+			if kind == "missing" {
+				delete(changed.Operations, "discussion")
+			} else {
+				for i := range changed.Workers {
+					if changed.Workers[i].ID == p.ID {
+						if kind == "synthetic" {
+							changed.Workers[i].Synthetic = true
+						} else {
+							changed.Workers[i].Workspace = "writable"
+						}
+					}
+				}
+			}
+			data, _ := json.Marshal(changed)
+			path := filepath.Join(t.TempDir(), "config.json")
+			if e := os.WriteFile(path, data, 0600); e != nil {
+				t.Fatal(e)
+			}
+			if _, e := Load(path); e == nil {
+				t.Fatal("invalid discussion profile accepted")
+			}
+		})
+	}
+}

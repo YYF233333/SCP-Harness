@@ -1,7 +1,7 @@
 # SCP Harness v0 — Frozen Vorton Acceptance Walkthrough
 
 Status: normative Acceptance A10 fixture
-Date: 2026-09-20
+Date: 2026-09-22 (O5 human-in-the-loop amendment)
 
 This file freezes the **scenario and observations**, not the test harness implementation. Astra may choose how to drive the system, but may not change steps, fake-worker results, transfer amounts, expected repository contents, state transitions, or ledger equations to make the implementation pass.
 
@@ -87,7 +87,19 @@ Expected:
 - no participant balance was transferred by MergeSynth;
 - initial exploration marker is terminal and cannot run again after restart.
 
-### CP2 — Explicit allocation
+### CP1b — Human discussion and immutable refinement
+
+After exploration, scheduler is idle. `option discuss OM --text "Why prototype
+first?"` creates one human discussion.comment and one discussion Pending. Run one
+readonly worker; it returns strict discussion text explaining reasons, risks and
+recommendations. `option thread OM` shows comment/reply in created_at,id order.
+Charge C_discuss to T1 root; no Artifact, resource transfer or release occurs.
+
+Refine OM with unchanged `prototype-first` text and omitted transfer. The new child
+has zero balance, original OM stays OPEN with its original provenance. Both stay
+inert. This fixture retains OM as the frozen budget/chain anchor below.
+
+### CP2 — Explicit allocation and release
 
 Operator transfers:
 
@@ -96,7 +108,7 @@ OM += 240000 from T1 root
 OA += 120000 from T1 root
 ```
 
-Expected exact transfer effect: OM remaining increases by 240000, OA by 120000, root decreases by 360000, minted unchanged.
+Expected exact transfer effect: OM remaining increases by 240000, OA by 120000, root decreases by 360000, minted unchanged. Run scheduler and verify idle: no mutation Attempt or Pending. Then explicitly `option release OM`; exactly one initial mutation Pending is created.
 
 ### CP3 — OM continuation/reject/rework/promotion
 
@@ -109,7 +121,7 @@ Expected:
 - protected test/reviewer sequence exactly PASS/REJECT/PASS/APPROVE;
 - promotion occurs only for A3 and creates `R1`;
 - `A2` rejection never modifies A2;
-- OM remains OPEN after promotion;
+- OM remains OPEN and funded after promotion; Pending is absent; continued scheduler polling starts no second cycle;
 - all worker/test/review charges are charged to OM resource anchor;
 - `R1` does not contain `bad.txt`.
 
@@ -145,7 +157,7 @@ Parent remains OPEN; minted unchanged.
 
 ### CP6 — Bad worker interrupt
 
-Allow scheduler to start mutation for OBAD and wait until the child/grandchild process exists, then execute `attempt interrupt <current>`.
+Explicitly `option release OBAD`, allow scheduler to start mutation for OBAD and wait until the child/grandchild process exists, then execute `attempt interrupt <current>`.
 
 Expected:
 
@@ -168,7 +180,7 @@ Expected:
 
 ### CP8 — Emergency T2
 
-Create T2 on the same repo with initial budget 120000. Run its one-time option generation; it yields only `OE`. Allocate exactly 80000 to OE, then run OE through mutation/test/review/promotion.
+Create T2 on the same repo with initial budget 120000. Run its one-time option generation; it yields only `OE`. Allocate exactly 80000 to OE, verify idle, explicitly `option release OE`, then run OE through mutation/test/review/promotion.
 
 Expected:
 
@@ -224,3 +236,14 @@ Also verify:
 - raw Options and rejected/interrupted Artifacts remain readable history;
 - no role name/model/provider string acquired Core semantics;
 - exact worker/test/review behavior above was obtained through ordinary configured fake executables, not test-only bypasses in production Core.
+
+## 5. Real Codex release acceptance
+
+The Windows release script explicitly selects TestHumanOptionReleaseIntegration
+and TestCodexExecutionBoundary. H1 polls the actual scheduler with funded Options
+and zero releases: zero mutation Attempts, unchanged repository. H2 obtains a real
+Codex discussion.reply with readonly source, no Artifact or promotion. H3 explicitly
+releases and runs mutation/protected test/review/promotion. H4 polls after promotion:
+OPEN + funded + no Pending stays idle; a second host release starts a second cycle.
+No mandatory case may be skipped. The Codex bundle retains YOLO execution, volatile
+HOME/credentials and mandatory distro termination under the existing OS boundary.

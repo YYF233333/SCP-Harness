@@ -13,6 +13,8 @@ from role-card context and capabilities.
 
 - `option_generation`, `merge_judge`, and `merge_synth` use an Explorer profile
   with `workspace=none`.
+- `discussion` uses a separate readonly authoritative-source profile with
+  synthetic_git=false and Task-root resource anchor.
 - `mutation` uses a Builder profile with a writable synthetic workspace.
 - `review` uses a Reviewer profile with a read-only submitted Artifact workspace
   and visibility of the protected-test result.
@@ -50,7 +52,7 @@ in their frozen input order. Direct lineage contains only immediate neighbours.
 Artifact-content projections are provided only for Artifact-target operations.
 
 All result schemas are strict: duplicate/unknown keys, missing/null required
-fields, wrong-case enums and blank text fail validation. The five exact schemas
+fields, wrong-case enums and blank text fail validation. The six exact schemas
 are in specification §14. A minimal mutation result is:
 
 ```json
@@ -76,3 +78,26 @@ uses process-group termination; explicit recovery also terminates recorded group
 left by a crashed Core. Regular files and
 directories are supported; links and special files fail closed. A synthetic Git
 repository contains one base commit, no remotes, and is excluded from capture.
+
+## Discussion and host release
+
+A discussion result is exactly:
+
+```json
+{"schema_version":0,"operation":"discussion","text":"non-empty response"}
+```
+
+Read context/discussion-instruction.txt and the current human question in the
+ordered claim.related projection. Explain the conclusion, reasons summary, risks
+and recommendations; do not output hidden chain-of-thought or claim to have changed
+code/Option. O5 decides whether to refine. The readonly worker gets task/objective,
+Option/direct lineage/related Claims and ledger channels through its minimal card.
+
+Core publishes a valid RETURNED result as discussion.reply with Attempt-bound
+issuer/provenance. Invalid/crash/timeout/interrupt yields no reply, ends the request
+and never retries automatically; the human comment remains. Discussion cannot
+produce Artifacts, new Options, allocations, release, patch or verdict.
+
+No worker result, new_options entry or Claim can release an Option. Funding never
+starts work. Only explicit host option.release creates a fresh mutation Pending;
+review APPROVE can only promote the current Artifact in that already released chain.

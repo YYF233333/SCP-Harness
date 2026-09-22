@@ -17,8 +17,11 @@ func TestR1ClaimsPreserveLifecycleCancellation(t *testing.T) {
 	for _, action := range []string{"suspend", "close"} {
 		for _, typ := range []string{"note", "resource.propose", "Resource.Propose", "resource.propose.foo", "fulfilled"} {
 			t.Run(action+"/"+typ, func(t *testing.T) {
-				c, taskID, optionID := claimFixture(t, "claim.publish", "resource.propose", "task.suspend", "task.complete", "sandbox.write", "process.execute", "repository.read")
+				c, taskID, optionID := claimFixture(t, "option.release", "claim.publish", "resource.propose", "task.suspend", "task.complete", "sandbox.write", "process.execute", "repository.read")
 				owner := model.ID()
+				if _, e := c.ReleaseOption(optionID); e != nil {
+					t.Fatal(e)
+				}
 				step, e := c.Next(owner)
 				if e != nil || step == nil {
 					t.Fatalf("initial step: %v", e)

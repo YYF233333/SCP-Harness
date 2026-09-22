@@ -32,6 +32,9 @@ func TestR4UnavailableSnapshotHasNoCandidateEffects(t *testing.T) {
 	if _, e = c.Allocate(option.ID, 60000); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = c.ReleaseOption(option.ID); e != nil {
+		t.Fatal(e)
+	}
 	pending, e := c.Next(engine.Owner)
 	if e != nil || pending == nil {
 		t.Fatalf("pending mutation: %v", e)

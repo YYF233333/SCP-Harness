@@ -7,7 +7,8 @@
     "O5-1": "testdata/cards/O5-1.json",
     "operator": "testdata/cards/operator.json",
     "reviewer": "testdata/cards/reviewer.json",
-    "merge": "testdata/cards/merge.json"
+    "merge": "testdata/cards/merge.json",
+    "discussion": "testdata/cards/discussion.json"
   },
   "wsl": {
     "distro": "SCP-Worker",
@@ -76,6 +77,19 @@
       "unavailable_exit_codes": [
         75
       ]
+    },
+    {
+      "id": "discussion",
+      "command": [
+        "/opt/scp-workers/discussion"
+      ],
+      "actor_card": "discussion",
+      "timeout_ms": 60000,
+      "workspace": "readonly",
+      "synthetic_git": false,
+      "unavailable_exit_codes": [
+        75
+      ]
     }
   ],
   "operation_profiles": {
@@ -83,6 +97,7 @@
     "review": "reviewer",
     "option_generation": "merge",
     "merge_judge": "merge",
-    "merge_synth": "merge"
+    "merge_synth": "merge",
+    "discussion": "discussion"
   }
 }

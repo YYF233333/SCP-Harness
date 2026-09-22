@@ -117,6 +117,27 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	id := option["id"].(string)
 	keys(t, call(0, "option", "allocate", id, "--wall-ms", "5000"), optionKeys)
 	keys(t, call(0, "option", "show", id), optionKeys)
+	zero := call(0, "option", "refine", id, "--text", "zero child")
+	keys(t, zero, optionKeys)
+	if zero["remaining_wall_ms"] != float64(0) || call(0, "option", "show", id)["remaining_wall_ms"] != float64(5000) {
+		t.Fatal("default refine transferred resources")
+	}
+	claimKeys := "id task_id subject_type subject_id claim_type payload_json issuer_actor_id created_against_repo_sha created_against_state_revision created_at"
+	keys(t, call(0, "option", "comment", id, "--text", "why?"), claimKeys)
+	thread := call(0, "option", "thread", id)
+	keys(t, thread, "option messages")
+	keys(t, thread["option"], optionKeys)
+	keys(t, thread["messages"].([]any)[0], claimKeys)
+	var human, humanErr bytes.Buffer
+	if run([]string{"--config", path, "option", "thread", id}, &human, &humanErr) != 0 || !strings.Contains(human.String(), "] O5-1:\nwhy?\n") {
+		t.Fatal("human thread", human.String(), humanErr.String())
+	}
+	if value := call(3, "option", "release", id); value["code"] != "INVALID_STATE" {
+		t.Fatal(value)
+	}
+	if value := call(2, "option", "discuss", id); value["code"] != "USAGE_ERROR" {
+		t.Fatal(value)
+	}
 	refined := call(0, "option", "refine", id, "--text", "child", "--transfer-wall-ms", "100")
 	keys(t, refined, optionKeys)
 	spec := filepath.Join(dir, "split.json")
@@ -140,6 +161,30 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	keys(t, claim, "id task_id subject_type subject_id claim_type payload_json issuer_actor_id created_against_repo_sha created_against_state_revision created_at")
 	c, e := core.Open(cfg, false)
 	if e != nil {
+		t.Fatal(e)
+	}
+	if e = c.Store.Update(func(s *model.State) error { s.Exploration[taskID].Done = true; return nil }); e != nil {
+		t.Fatal(e)
+	}
+	keys(t, call(0, "option", "release", id), optionKeys)
+	if value := call(4, "option", "discuss", id, "--text", "blocked"); value["code"] != "BLOCKED" {
+		t.Fatal(value)
+	}
+	// End this queued chain explicitly, then queue one bounded discussion.
+	p := model.Step{TaskID: taskID, OptionID: id, Operation: "mutation", TargetType: "OPTION", TargetID: id}
+	if e = c.EndPromotion(p, "", "test chain ended"); e != nil {
+		t.Fatal(e)
+	}
+	discussion := call(0, "option", "discuss", id, "--text", "explain")
+	keys(t, discussion, "comment queued")
+	keys(t, discussion["comment"], claimKeys)
+	if discussion["queued"] != true {
+		t.Fatal("queued must be true")
+	}
+	if value := call(4, "option", "release", id); value["code"] != "BLOCKED" {
+		t.Fatal(value)
+	}
+	if e = c.EndPromotion(p, "", "test discussion ended"); e != nil {
 		t.Fatal(e)
 	}
 	attemptID, artifactID := model.ID(), model.ID()

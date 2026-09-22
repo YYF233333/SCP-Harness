@@ -45,6 +45,12 @@
       "name": "option.allocate"
     },
     {
+      "name": "option.release"
+    },
+    {
+      "name": "option.discuss"
+    },
+    {
       "name": "option.complete"
     },
     {

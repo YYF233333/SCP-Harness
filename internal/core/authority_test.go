@@ -2,8 +2,13 @@ package core
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"scp-harness/internal/config"
@@ -12,8 +17,11 @@ import (
 )
 
 func TestInfluenceCannotChangeSchedulingAuthorizationOrLease(t *testing.T) {
-	c, taskID, id := claimFixture(t, "option.propose", "option.allocate", "sandbox.write", "process.execute", "repository.read")
+	c, taskID, id := claimFixture(t, "option.release", "option.propose", "option.allocate", "sandbox.write", "process.execute", "repository.read")
 	owner := "test-owner"
+	if _, e := c.ReleaseOption(id); e != nil {
+		t.Fatal(e)
+	}
 	p, e := c.Next(owner)
 	if e != nil {
 		t.Fatal(e)
@@ -29,6 +37,12 @@ func TestInfluenceCannotChangeSchedulingAuthorizationOrLease(t *testing.T) {
 	card := c.Operator()
 	card.Influence = map[string]json.Number{"priority": "1e1000", "authority": "9999999"}
 	c.Config.Cards[c.Config.Operator] = card
+	if next, e := c.Next(owner); e != nil || next != nil {
+		t.Fatal("influence released a chain", e)
+	}
+	if _, e = c.ReleaseOption(id); e != nil {
+		t.Fatal(e)
+	}
 	p, e = c.Next(owner)
 	if e != nil || p == nil || p.TargetID != id {
 		t.Fatalf("influence changed scheduling: %v", e)
@@ -89,5 +103,86 @@ func TestFrozenSchemaCapabilityAndContextRegistries(t *testing.T) {
 		if !caps[s] {
 			t.Fatal("invented capability")
 		}
+	}
+}
+
+// The behavioral suite exercises every creation path and 100 funded candidates.
+// This AST guard also prevents reintroducing a direct fresh-Option seed or a
+// scheduler/worker call to the host release entrypoint.
+func TestFreshMutationSeedArchitecture(t *testing.T) {
+	root := filepath.Join("..", "..")
+	seeds, calls := 0, 0
+	e := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == ".local" || d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, e := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if e != nil {
+			return e
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			ast.Inspect(fn, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "ReleaseOption" {
+						calls++
+						if rel != "cmd/scp/main.go" {
+							t.Errorf("release called outside host CLI: %s", rel)
+						}
+					}
+				}
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				typ, ok := lit.Type.(*ast.SelectorExpr)
+				if !ok || typ.Sel.Name != "Step" {
+					return true
+				}
+				fields := map[string]string{}
+				for _, element := range lit.Elts {
+					kv, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := kv.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					value, ok := kv.Value.(*ast.BasicLit)
+					if ok && value.Kind == token.STRING {
+						fields[key.Name], _ = strconv.Unquote(value.Value)
+					}
+				}
+				if fields["Operation"] == "mutation" && fields["TargetType"] == "OPTION" {
+					seeds++
+					if rel != "internal/core/discussion.go" || fn.Name.Name != "ReleaseOption" {
+						t.Errorf("fresh mutation seed outside ReleaseOption: %s/%s", rel, fn.Name.Name)
+					}
+				}
+				return true
+			})
+		}
+		return nil
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if seeds != 1 || calls != 1 {
+		t.Fatalf("expected one seed and one host caller; got %d/%d", seeds, calls)
 	}
 }

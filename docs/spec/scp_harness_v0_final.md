@@ -119,7 +119,7 @@ Only an identity with `task.create` (v0: O5) may create a Task.
 - responsible O5 identity;
 - initial resource budget.
 
-Task creation is intentionally a **resource minting boundary**. The O5 allocation is the external authorization. UI defaults may prefill values but Core never silently supplies budget.
+Task creation is intentionally a **resource minting boundary**. The explicit O5 create/extend budget authorizes resource minting; Option allocation never authorizes a mutation chain. UI defaults may prefill values but Core never silently supplies budget.
 
 ### Repository exclusivity
 
@@ -143,7 +143,7 @@ Resume:
 
 - reacquires the repository if free;
 - observes the current authoritative version;
-- restores open Options to scheduling;
+- restores Task eligibility for explicit release/discussion; canceled chains do not restart;
 - does not pretend old Options/Claims were created against the new world state.
 
 If frequent `suspend T2 -> run T3 -> resume T2` becomes normal, that is evidence for a future persistent Project/Site root. It is deliberately absent from v0.
@@ -248,7 +248,8 @@ Task creation/extension is the deliberate external resource-minting boundary con
 
 Every resource-consuming operation resolves to one resource anchor.
 
-- single-route work charges that Option;
+- discussion charges Task root even when its target Option has no allocation;
+- single-route mutation charges that Option;
 - Artifact-target work charges the Artifact's semantic-anchor Option;
 - new-route exploration charges the Task/nearest parent pool;
 - cross-Option compare/merge work charges the resource-tree LCA of the participating anchors.
@@ -262,7 +263,7 @@ T1
 └─ D10: 1d
 ```
 
-`refine(D9)` charges D9. `attempt(D9)` charges D9. `attempt(P31)` charges D9 if `P31.semantic_anchor = D9`. `merge(D9,D10)` charges T1.
+`refine(D9)` charges D9. `mutation(D9)` charges D9; `discussion(D9)` charges T1. `attempt(P31)` charges D9 if `P31.semantic_anchor = D9`. `merge(D9,D10)` charges T1.
 
 ### Transfers
 
@@ -285,23 +286,32 @@ Waiting and tool execution are not implicitly free merely because the language m
 
 ## 8. Scheduling
 
-Allocation and scheduling are distinct:
+RESOURCE IS NOT AUTHORITY. Allocation sets the spending ceiling. Only explicit
+host `scp option release ID` creates a fresh mutation Pending. Scheduler advances
+existing Pending chains/discussions, then one-time initial exploration, then idles.
+It never scans funded Options to decide what to implement. No Option can start a
+mutation chain without explicit host option.release.
 
-- allocation says how much a route may consume;
-- scheduling says who gets the current execution opportunity.
+Release requires option.release, OPEN Option, ACTIVE Task, completed exploration,
+positive Option budget and no Task Pending. One release authorizes the whole
+continuation/test/review/rework/promotion chain. On promotion, DROP, invalid result,
+crash, timeout, interruption or changed precondition, Pending is deleted and
+execution authorization ends. The Option remains OPEN; another cycle needs another
+release even with remaining funds. Recover preserves existing chains and cannot
+invent release from historical balances. No persistent release state is added.
 
-v0 uses a mechanical scheduler inspired by ordinary CPU scheduling (e.g. FIFO/round-robin/fair scheduling). It does not require another model to decide each ordering.
+Humans propose Options, comment, request bounded discussion, refine immutably,
+allocate, then explicitly release. Discussion comments and replies are informational
+Claims with exact {"text":"non-empty text"} payloads. Thread is a sorted CLI view.
+Discuss atomically adds the comment and a discussion Pending; it requires
+option.discuss and claim.publish and is blocked by an existing chain. Comment can
+be added during execution. Discussion runs readonly against Task-root budget and
+cannot create an Artifact or release. The execution plan specifies the six strict
+operation schemas and transaction/error/CLI contracts.
 
-v0 does not require preemptive time slicing between Options. A poorly behaving Attempt may therefore consume a large fraction or all of its Option allocation. This is accepted because the allocation is bounded and O5 has an emergency interrupt.
-
-A runnable Option is mechanically constrained by at least:
-
-```text
-Option is open
-&& Option has remaining allocation
-&& containing Task is ACTIVE
-&& required authoritative resource is available
-```
+Refine's optional transfer defaults to zero. Refine/split/merge cannot change an
+Option participating in Pending; allocation may replenish it. Option text stays
+immutable. O5 retains explicit interrupt/close controls.
 
 ---
 
@@ -400,7 +410,7 @@ A normally returning mutation worker may choose one of three v0 dispositions bef
 
 - **PROMOTE_FINAL** — capture Artifact, then request promotion/review.
 - **CONTINUE_FINAL** — capture Artifact, make it the default target of the next continuation Attempt for the same Option.
-- **DROP_FINAL** — capture Artifact for history only; the Option returns to scheduling from authoritative state.
+- **DROP_FINAL** — capture Artifact for history only; the chain ends; a new host option.release is required to retry from authoritative state.
 
 O5 `attempt.interrupt` defaults to `DROP_FINAL` unless explicitly overridden.
 
@@ -483,7 +493,7 @@ The next worker receives mechanical facts:
 
 The worker decides what to do. If it behaves badly, it consumes bounded budget.
 
-If the Option has no remaining budget, rework cannot start. The mutation chain ends and the authoritative-resource lock is released; the Option remains open but non-runnable until O5 reallocates/extends resources or closes the route.
+If the Option has no remaining budget, rework cannot start. The slot is released while the exact Pending step remains; O5 may replenish resources to resume that already authorized chain or cancel it.
 
 ---
 
@@ -503,7 +513,7 @@ Core mechanically:
 
 `interrupted` does not imply failed, rejected, abandoned, or false.
 
-The Option remains open and keeps its unspent allocation. A later fresh worker may retry the same Option. Default retry after O5 interrupt starts from authoritative state; the interrupted Artifact remains inspectable history.
+The Option remains open and keeps its unspent allocation. Only another explicit host option.release permits a fresh worker to retry the same Option. Retry after O5 interrupt starts from authoritative state; the interrupted Artifact remains inspectable history.
 
 ---
 
@@ -554,11 +564,11 @@ One cheap MergeJudge partitions raw proposals. One cheap MergeSynth produces can
 
 ### Step 4 — Allocate
 
-Configured resource-allocation policy transfers real portions of T1's budget to selected Options. Unallocated Task resource remains available for further exploration/cross-route work.
+Explicit resource allocation transfers real portions of T1's budget to candidate Options without execution authority. Unallocated Task resource remains available for further exploration/cross-route work.
 
 ### Step 5 — Schedule
 
-The mechanical scheduler chooses a runnable Option. Allocation size is not automatically priority. The selected Option obtains the current mutation opportunity when needed.
+O5 explicitly releases an Option after discussion/refinement/allocation. The mechanical scheduler executes that Pending chain; allocation alone never starts work.
 
 ### Step 6 — Execute
 

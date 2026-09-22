@@ -66,6 +66,9 @@ func testCrossProcessControl(t *testing.T) {
 		t.Fatal(e)
 	}
 	owner := model.ID()
+	if _, e = c.ReleaseOption(o.ID); e != nil {
+		t.Fatal(e)
+	}
 	p, e := c.Next(owner)
 	if e != nil || p == nil {
 		t.Fatalf("next: %v", e)

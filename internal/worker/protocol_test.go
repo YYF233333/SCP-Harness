@@ -67,3 +67,28 @@ func TestPartitionClosedSet(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkersCannotRequestRelease(t *testing.T) {
+	for _, raw := range []string{
+		`{"schema_version":0,"operation":"mutation","disposition":"DROP_FINAL","claims":[],"new_options":[],"release":true}`,
+		`{"schema_version":0,"operation":"mutation","disposition":"DROP_FINAL","claims":[],"new_options":[{"text":"candidate","release":true}]}`,
+		`{"schema_version":0,"operation":"option_generation","options":[{"text":"candidate","released":true}]}`,
+	} {
+		op := "mutation"
+		if strings.Contains(raw, "option_generation") {
+			op = "option_generation"
+		}
+		if _, e := Parse([]byte(raw), op, 10000); e == nil {
+			t.Fatal("worker release accepted", raw)
+		}
+	}
+	for _, field := range []string{"claims", "new_options", "release", "allocation", "patch", "verdict"} {
+		raw := `{"schema_version":0,"operation":"discussion","text":"answer","` + field + `":true}`
+		if _, e := Parse([]byte(raw), "discussion", 10000); e == nil {
+			t.Fatal("discussion authority field", field)
+		}
+	}
+	if r, e := Parse([]byte(`{"schema_version":0,"operation":"discussion","text":"answer"}`), "discussion", 10000); e != nil || r.Text != "answer" {
+		t.Fatal(e)
+	}
+}
