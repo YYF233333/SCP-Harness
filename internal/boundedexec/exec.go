@@ -22,6 +22,7 @@ type Command struct {
 	MaxStdout, MaxStderr int64
 	// StdoutSink supports bounded streaming archives without accumulating in RAM.
 	StdoutSink io.Writer
+	StderrSink io.Writer
 }
 type Result struct {
 	Stdout, Stderr                              []byte
@@ -77,7 +78,11 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		sink = &out
 	}
 	ow := &capWriter{dst: sink, left: c.MaxStdout}
-	ew := &capWriter{dst: &errout, left: c.MaxStderr}
+	errSink := c.StderrSink
+	if errSink == nil {
+		errSink = &errout
+	}
+	ew := &capWriter{dst: errSink, left: c.MaxStderr}
 	cmd.Stdout = ow
 	cmd.Stderr = ew
 	cmd.WaitDelay = time.Second

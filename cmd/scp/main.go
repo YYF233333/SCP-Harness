@@ -17,6 +17,7 @@ import (
 	"scp-harness/internal/core"
 	"scp-harness/internal/model"
 	"scp-harness/internal/scheduler"
+	"scp-harness/internal/wsl"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -86,9 +87,49 @@ func run(args []string, out, errout io.Writer) (exit int) {
 		command += "." + args[0]
 		args = args[1:]
 	}
+	if command == "attempt.watch" && asJSON {
+		return emit(nil, model.Err("USAGE_ERROR", "attempt watch does not support --json"))
+	}
 	cfg, e := config.Load(configPath)
 	if e != nil {
 		return emit(nil, e)
+	}
+	// Observations never open the normal controller or its error/blocker path.
+	if command == "attempt.watch" || command == "attempt.diff" {
+		f, id, rest, e := flags(command, args, true)
+		if e != nil {
+			return emit(nil, e)
+		}
+		if e = parse(f, rest); e != nil {
+			return emit(nil, e)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		c := &core.Core{Config: cfg, Runner: wsl.Runner{Config: cfg}}
+		if command == "attempt.watch" {
+			if e = c.WatchAttempt(ctx, id, out); e != nil {
+				return emit(nil, e)
+			}
+			return 0
+		}
+		diff, e := c.DiffAttempt(ctx, id)
+		if e == nil && asJSON {
+			encoded, _ := json.Marshal(map[string]any{"ok": true, "command": command, "data": diff})
+			if int64(len(encoded)+1) > cfg.Limits.Stdout {
+				e = model.Err("LIMIT_EXCEEDED", "encoded live diff exceeds output bound")
+			}
+		}
+		if e != nil || asJSON {
+			return emit(diff, e)
+		}
+		_, e = fmt.Fprintf(out, "Attempt %s — %s\n%s", id, diff.Observation, diff.Text)
+		if e == nil && diff.Truncated {
+			_, e = fmt.Fprintln(out, "[textual diff truncated at output bound]")
+		}
+		if e != nil {
+			return emit(nil, e)
+		}
+		return 0
 	}
 	c, e := core.Open(cfg, command == "init")
 	if e != nil {

@@ -45,6 +45,7 @@ try {
         Workers = @('TestRealWorkerLifecycle')
         Isolation = @('TestActualInteropAndAutomountIsolation', 'TestWorkerRuntimeLifetime', 'TestWorkerHostAuthorityDenied', 'TestWorkerRuntimeAdmission')
         HumanRelease = @('TestHumanOptionReleaseIntegration')
+        Observation = @('TestLiveAttemptObservation', 'TestObservationInterruptedLogs', 'TestObservationReadonlyRejection', 'TestObservationConcurrentCapture', 'TestObservationContinuationBase', 'TestObservationCLIGolden')
         Regressions = @('TestR1ClaimsPreserveLifecycleCancellation', 'TestR3OversizedWorkspaceCleanupProgress', 'TestR3ProtectedCopyReallyDiscarded', 'TestR4UnavailableSnapshotHasNoCandidateEffects', 'TestR4ExactSnapshotAttributes', 'TestProtectedTestCannotBeOverriddenAndReviewerReadonly')
         CodexDiscussionRelease = @('TestCodexExecutionBoundary')
     }

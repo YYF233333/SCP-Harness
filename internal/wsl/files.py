@@ -42,6 +42,50 @@ def scan(base, limits, exclude_git=False):
                 if stat.S_ISDIR(info.st_mode):
                     stack.append((entry.path, name + '/'))
 
+def identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+def capture(base, limits, archive):
+    # Both terminal capture and live observation use the same admission bounds.
+    # Pin every path component without following links; concurrent replacement
+    # must never let the root helper read outside the worker workspace.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    root_fd = os.open(base, flags | os.O_DIRECTORY)
+    try:
+        initial_root = identity(os.fstat(root_fd))
+        files = list(scan(base, limits, True))
+        inventory = {name: identity(info) for _, name, info in files}
+        for _, name, info in files:
+            fd = os.dup(root_fd)
+            try:
+                parts = name.split('/')
+                for i, part in enumerate(parts):
+                    child = os.open(part, flags | (os.O_DIRECTORY if i < len(parts)-1 else 0), dir_fd=fd)
+                    os.close(fd)
+                    fd = child
+                if identity(os.fstat(fd)) != identity(info):
+                    fail('live workspace changed during observation; retry')
+                header = tarfile.TarInfo(name)
+                header.mode = stat.S_IMODE(info.st_mode)
+                header.type = tarfile.DIRTYPE if stat.S_ISDIR(info.st_mode) else tarfile.REGTYPE
+                header.size = 0 if stat.S_ISDIR(info.st_mode) else info.st_size
+                header.mtime = info.st_mtime
+                if stat.S_ISDIR(info.st_mode):
+                    archive.addfile(header)
+                else:
+                    with os.fdopen(os.dup(fd), 'rb') as source:
+                        archive.addfile(header, source)
+                if identity(os.fstat(fd)) != identity(info):
+                    fail('live workspace changed during observation; retry')
+            finally:
+                os.close(fd)
+        final = {name: identity(info) for _, name, info in scan(base, limits, True)}
+        if inventory != final or identity(os.stat(base, follow_symlinks=False)) != initial_root:
+            fail('live workspace changed during observation; retry')
+    finally:
+        os.close(root_fd)
+
 def discard(base, limits):
     # Deletion is not workspace admission: neither file contents nor full paths
     # need to fit capture limits. Each incomplete batch unlinks actual entries.
@@ -121,7 +165,7 @@ elif op == 'permissions':
             os.chmod(filename, (0o755 if stat.S_ISDIR(info.st_mode) else 0o644 | (info.st_mode & 0o111)) if writable else (0o555 if stat.S_ISDIR(info.st_mode) else 0o444 | (info.st_mode & 0o111)))
         own(base, writable)
         os.chmod(base, 0o755 if writable else 0o555)
-elif op == 'capture':
+elif op in ('capture', 'observe'):
     limits = json.loads(sys.argv[3])
     try:
         with open(root + '/input.json', 'rb') as f:
@@ -133,11 +177,14 @@ elif op == 'capture':
     base = root + '/workspace'
     if not os.path.isdir(base) or os.path.islink(base):
         fail('workspace missing or invalid')
-    # Validate the entire bounded inventory before publishing any tar bytes.
-    files = list(scan(base, limits, True))
-    with tarfile.open(fileobj=sys.stdout.buffer, mode='w|', format=tarfile.PAX_FORMAT) as archive:
-        for filename, name, info in files:
-            archive.add(filename, arcname=name, recursive=False)
+    try:
+        with tarfile.open(fileobj=sys.stdout.buffer, mode='w|', format=tarfile.PAX_FORMAT) as archive:
+            capture(base, limits, archive)
+        with open(root + '/input.json', 'rb') as f:
+            if json.load(f).get('attempt_id') != owner:
+                fail('live workspace changed during observation; retry')
+    except (OSError, ValueError, tarfile.TarError):
+        fail('live workspace changed during observation; retry')
 elif op == 'result':
     cap = int(sys.argv[3])
     filename = root + '/result.json'

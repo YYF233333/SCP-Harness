@@ -6,9 +6,11 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 
 	_ "modernc.org/sqlite"
 	"scp-harness/internal/ledger"
@@ -23,6 +25,36 @@ var schema string
 // conservation invariants, then atomically publishes it. Journal/blocker rows
 // are separate to make the mandated recovery records directly inspectable.
 type Store struct{ DB *sql.DB }
+
+// OpenReadOnly uses deferred read transactions, never a RESERVED writer lock.
+// Observation failures must not enter Update or EmergencyBlock.
+func OpenReadOnly(path string) (*Store, error) {
+	absolute, e := filepath.Abs(path)
+	if e != nil {
+		return nil, storage(e)
+	}
+	p := filepath.ToSlash(absolute)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro&_pragma=busy_timeout(1000)&_txlock=deferred"}
+	db, e := sql.Open("sqlite", u.String())
+	if e != nil {
+		return nil, storage(e)
+	}
+	db.SetMaxOpenConns(1)
+	s := &Store{db}
+	var version int
+	if e = db.QueryRow("SELECT version FROM schema_version").Scan(&version); e != nil {
+		db.Close()
+		return nil, storage(e)
+	}
+	if version != 0 {
+		db.Close()
+		return nil, model.Err("CORE_INCONSISTENT", "unsupported database schema %d", version)
+	}
+	return s, nil
+}
 
 func Open(path string, init bool) (*Store, error) {
 	if init {

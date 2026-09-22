@@ -289,6 +289,10 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 	}
 	out := worker.Outcome{Status: "TERMINATED"}
 	out.Process.ExitCode = -1
+	var stdoutFile, stderrFile *os.File
+	if e == nil {
+		stdoutFile, stderrFile, e = worker.OpenLogs(a.Stdout, a.Stderr)
+	}
 	if e == nil {
 		e = c.MarkRunning(a.ID)
 	}
@@ -297,7 +301,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 		if remaining <= 0 {
 			out.Status = "TIMED_OUT"
 		} else {
-			out, e = worker.Run(active, c.Runner, profile, remaining)
+			out, e = worker.Run(active, c.Runner, profile, remaining, stdoutFile, stderrFile)
 		}
 	}
 	launchFailure := e != nil && out.Reason != nil && *out.Reason == "RUNNER_UNAVAILABLE"
@@ -365,13 +369,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 			}
 		}
 	}
-	stdout, stderr := "", ""
-	var logErr error
-	if dir != "" {
-		stdout, stderr, logErr = worker.Logs(filepath.Join(dir, "logs"), out.Process)
-	} else {
-		logErr = model.Err("STORAGE_FAILURE", "runtime directory unavailable")
-	}
+	logErr := worker.CloseLogs(stdoutFile, stderrFile)
 	if logErr != nil {
 		e = logErr
 		status = "TERMINATED"
@@ -382,7 +380,7 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 		code := out.Process.ExitCode
 		exit = &code
 	}
-	v := core.Completion{AttemptID: a.ID, Step: p, Artifact: captured, Result: result, Valid: valid, Status: status, Reason: reason, ExitCode: exit, Stdout: stdout, Stderr: stderr, Elapsed: time.Since(start).Milliseconds(), Uncertain: status == "TIMED_OUT" || terminateErr != nil && model.Code(terminateErr) == "RUNNER_UNAVAILABLE", Visible: visible}
+	v := core.Completion{AttemptID: a.ID, Step: p, Artifact: captured, Result: result, Valid: valid, Status: status, Reason: reason, ExitCode: exit, Stdout: a.Stdout, Stderr: a.Stderr, Elapsed: time.Since(start).Milliseconds(), Uncertain: status == "TIMED_OUT" || terminateErr != nil && model.Code(terminateErr) == "RUNNER_UNAVAILABLE", Visible: visible}
 	if ce := c.Complete(v); ce != nil {
 		return ce
 	}

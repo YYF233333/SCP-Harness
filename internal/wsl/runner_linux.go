@@ -37,7 +37,10 @@ func (r Runner) Run(ctx context.Context, user string, args []string, in io.Reade
 		launch := "import os,sys\npid=os.getpid()\nstart=open('/proc/self/stat').read().rsplit(')',1)[1].split()[19]\nwith open(sys.argv[1],'w') as f: f.write(str(pid)+' '+start)\nos.execvp(sys.argv[2],sys.argv[2:])\n"
 		args = append([]string{"python3", "-c", launch, r.Root() + ".process"}, args...)
 	}
-	return boundedexec.Run(ctx, boundedexec.Command{Argv: args, Stdin: in, StdoutSink: out, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
+	if r.Stdout != nil {
+		out = r.Stdout
+	}
+	return boundedexec.Run(ctx, boundedexec.Command{Argv: args, Stdin: in, StdoutSink: out, StderrSink: r.Stderr, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
 }
 
 func (r Runner) Check(ctx context.Context) error {

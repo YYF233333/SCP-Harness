@@ -79,6 +79,24 @@ left by a crashed Core. Regular files and
 directories are supported; links and special files fail closed. A synthetic Git
 repository contains one base commit, no remotes, and is excluded from capture.
 
+## Live observation
+
+Core creates host-owned stdout/stderr files before worker launch. Its bounded pipe
+capture writes them while running; overflow still drains/discards beyond the
+existing per-stream cap. Workers cannot write these host files. Attempt paths are
+stable during PREPARING/RUNNING, and retained after return, crash, timeout or
+interrupt. No new worker fields or provider protocol are involved.
+
+`scp attempt watch ATTEMPT_ID` replays available output and follows to terminal;
+Ctrl+C only exits the watcher. It has no stdin/instruction channel. Each stream's
+byte order is retained; cross-stream ordering is best effort. `--json` is rejected.
+`scp attempt diff ATTEMPT_ID` reads a bounded capture of the live writable workspace
+against its immutable input, including continuation Artifact input. It excludes
+synthetic Git and never invokes candidate code or Git. A/M/D and bounded textual
+hunks are observational, not a published snapshot. Concurrent changes or read
+failures return a retry error without touching authority or stopping the worker.
+Readonly/none Attempts reject diff; terminal mutation results remain Artifacts.
+
 ## Discussion and host release
 
 A discussion result is exactly:

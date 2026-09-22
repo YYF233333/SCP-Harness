@@ -104,11 +104,15 @@ func main() {
 	}
 	switch mode {
 	case "crash-worker":
+		fmt.Println("before crash")
+		fmt.Fprintln(os.Stderr, "before crash stderr")
 		write("crash.txt", "captured\n")
 		os.Exit(12)
 	case "exit-127-worker":
 		os.Exit(127)
 	case "timeout-worker":
+		fmt.Println("before timeout")
+		fmt.Fprintln(os.Stderr, "before timeout stderr")
 		write("timeout.txt", "captured\n")
 		for {
 			time.Sleep(time.Second)
@@ -181,6 +185,8 @@ func main() {
 		vorton(in)
 		return
 	case "success-worker":
+		fmt.Println("before return")
+		fmt.Fprintln(os.Stderr, "before return stderr")
 		switch in.Operation {
 		case "mutation":
 			mutation("DROP_FINAL")

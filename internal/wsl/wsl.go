@@ -18,6 +18,8 @@ var fileHelper string
 type Runner struct {
 	Config    *config.Config
 	Protected bool
+	// Only worker.Run sets these on its value copy; control calls stay captured.
+	Stdout, Stderr io.Writer
 }
 
 func (r Runner) Executable(ctx context.Context, command, cwd string) (bool, error) {

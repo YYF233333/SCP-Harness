@@ -29,7 +29,10 @@ func (r Runner) Args(user string, args ...string) []string {
 }
 
 func (r Runner) Run(ctx context.Context, user string, args []string, in io.Reader, out io.Writer, timeout time.Duration, maxout, maxerr int64) (boundedexec.Result, error) {
-	return boundedexec.Run(ctx, boundedexec.Command{Argv: r.Args(user, args...), Stdin: in, StdoutSink: out, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
+	if r.Stdout != nil {
+		out = r.Stdout
+	}
+	return boundedexec.Run(ctx, boundedexec.Command{Argv: r.Args(user, args...), Stdin: in, StdoutSink: out, StderrSink: r.Stderr, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
 }
 
 func (r Runner) Check(ctx context.Context) error {

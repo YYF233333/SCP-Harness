@@ -454,6 +454,9 @@ func testRealWorkerLifecycle(t *testing.T) {
 			if tc.mode == "timeout-worker" {
 				c.Config.Workers[0].Timeout = 3000
 			}
+			if tc.mode == "huge-output-worker" {
+				c.Config.Limits.Stdout, c.Config.Limits.Stderr = 4096, 3072
+			}
 			_, e = engine.Step(context.Background())
 			if tc.mode == "worker-unavailable" {
 				if model.Code(e) != "WORKER_UNAVAILABLE" {
@@ -475,13 +478,25 @@ func testRealWorkerLifecycle(t *testing.T) {
 			if s.Options[o.ID].Status != "OPEN" {
 				t.Fatal("worker exit closed Option")
 			}
-			for _, p := range []string{a.Stdout, a.Stderr} {
+			for p, cap := range map[string]int64{a.Stdout: c.Config.Limits.Stdout, a.Stderr: c.Config.Limits.Stderr} {
 				info, e := os.Stat(p)
 				if e != nil {
 					t.Fatal(e)
 				}
-				if info.Size() > c.Config.Limits.Stdout {
+				if info.Size() > cap {
 					t.Fatal("unbounded process log")
+				}
+				data, e := os.ReadFile(p)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if tc.mode == "success-worker" || tc.mode == "crash-worker" || tc.mode == "timeout-worker" {
+					if !strings.Contains(string(data), "before ") {
+						t.Fatalf("durable %s log missing: %s", tc.status, p)
+					}
+				}
+				if tc.mode == "huge-output-worker" && int64(len(data)) != cap {
+					t.Fatal("output cap changed")
 				}
 			}
 			if tc.mode == "worker-unavailable" {

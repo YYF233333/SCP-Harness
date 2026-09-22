@@ -162,8 +162,36 @@ work: comment, optionally interrupt, wait for settlement, discuss, refine/propos
 allocate, release. Refine/split/merge participants in Pending are blocked; allocate
 may replenish an existing chain. Use option close / task close for completion.
 
-`--json` emits one JSON envelope. Logs go to stderr. The complete command list,
+`--json` emits one JSON envelope; `attempt watch` rejects it with USAGE_ERROR.
+The complete command list,
 projections, error codes and capability matrix are frozen in specification §36.
+
+## Observe a live Attempt
+
+```powershell
+scp status
+scp attempt watch ATTEMPT_ID
+scp attempt diff ATTEMPT_ID
+scp attempt interrupt ATTEMPT_ID
+```
+
+Watch replays the saved stdout/stderr and follows new output until terminal.
+PREPARING waits for log creation. Ctrl+C exits only the watcher; multiple watchers
+can coexist. Per-stream byte order is preserved; cross-stream timing is best effort.
+The stable Attempt stdout_path/stderr_path point to host-owned bounded files that
+survive return, crash, timeout and interrupt. Watch never sends input to workers.
+
+Diff shows actual A/M/D paths and bounded textual changes against the Attempt's
+immutable input, including its input Artifact for continuations. Large textual
+diffs are marked truncated; an oversized path inventory returns LIMIT_EXCEEDED.
+It is BEST-EFFORT OBSERVATION: simultaneous file changes or read failures can return
+BLOCKED with a retry message. It does not run Git, scripts or worker code, change
+workspace/synthetic Git, write authority state, reserve budget, acquire the execution
+slot, or interrupt a worker. Readonly/none Attempts reject diff; use Artifact for
+terminal mutation results. Observation failures create no runtime blockers.
+
+Humans judge drift and explicitly interrupt if necessary. Then use comment/discuss,
+refine/propose, allocate and explicit release; watching or funding never releases work.
 
 ## Interrupt, suspend and recover
 

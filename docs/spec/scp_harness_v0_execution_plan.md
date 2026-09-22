@@ -1174,6 +1174,8 @@ scp option close OPTION_ID
 
 scp attempt list [--task TASK_ID]
 scp attempt show ATTEMPT_ID
+scp attempt watch ATTEMPT_ID
+scp attempt diff ATTEMPT_ID
 scp attempt interrupt ATTEMPT_ID
 
 scp artifact list [--task TASK_ID]
@@ -1979,3 +1981,50 @@ fields. Claims, review APPROVE, allocation and all creation paths cannot seed a 
 chain. The frozen walkthrough and Windows release selection include funded idle,
 human discussion, explicit release and idle after promotion, including real Codex
 workers under the existing YOLO/OS boundary.
+
+## O5 FINAL RULING — Live Attempt Observability (2026-09-22)
+
+This amendment adds only `attempt watch ATTEMPT_ID` and `attempt diff ATTEMPT_ID`.
+RESOURCE IS NOT AUTHORITY. Both commands are observations: no execution slot,
+lease reservation/settlement, Pending, Option, Artifact, Claim, revision, blocker,
+scheduling, timeout or release effect. Only explicit `option release` starts a
+fresh mutation chain. No new package, interface, persistent object, schema version,
+provider protocol, event/RPC protocol, monitoring service or implicit control gate.
+
+Watch replays available stdout/stderr from offset zero and follows new bytes until
+terminal. PREPARING waits for logs/process; terminal replays then exits. Each stream
+retains byte order, without a global ordering promise between streams. Multiple
+watchers are independent. Ctrl+C exits only that watcher; it cannot interrupt the
+worker or inject stdin/instructions. `--json attempt watch` returns USAGE_ERROR;
+there is no JSONL stream. Worker pipes feed the existing bounded capture directly
+into Core-owned host log files, created before worker launch and inaccessible for
+worker writes. Existing stdout_path/stderr_path are stable in PREPARING/RUNNING.
+Logs survive return, crash, timeout, interrupt and Core recovery. Excess output is
+still drained/discarded at the original per-stream caps; streaming never raises
+resource/output limits or automatically interrupts based on output content.
+
+Diff compares the immutable input snapshot (including a continuation's input
+Artifact) with the actual current writable workspace. It reports sorted A/M/D
+paths and bounded textual replacement hunks, executable-bit changes and binary
+file notices. Text can be truncated at stdout_max_bytes; an inventory that cannot
+fit returns LIMIT_EXCEEDED. JSON uses one ordinary envelope with data keys
+attempt_id, observation, text, truncated. Human output identifies BEST-EFFORT
+OBSERVATION. It never runs Git, candidate code, worker scripts or the worker
+executable. A root-owned bounded capture validates paths, file identity, inventory
+and byte bounds without changing workspace or synthetic Git. It publishes no
+Artifact. Concurrent changes or runner read failures return a nonfatal BLOCKED
+retry; failures never create runtime blockers or affect worker execution.
+Readonly/none workspace Attempts return INVALID_STATE: Attempt has no writable
+workspace. Terminal mutation diff returns INVALID_STATE; inspect its Artifact.
+
+Humans use status -> watch -> diff -> explicit attempt interrupt when needed,
+then comment/discuss -> refine/propose -> allocate -> explicit release. Core does
+not classify log meaning, decide drift, pause, approve actions or request hidden
+model reasoning. Only executable stdout/stderr and filesystem effects are visible.
+
+Acceptance O1–O9 covers live-before-terminal output, real watcher Ctrl+C and zero
+authority, four terminal log outcomes, unchanged caps, live A/M/D, repeated readonly
+diff including .git, readonly/none rejection, concurrent/read/bound failure isolation,
+and all existing release/authority regressions. Final verification retains gofmt,
+diff --check, full daily Linux test/vet, architecture constraints, Windows/WSL release
+acceptance and the unmodified real TestCodexExecutionBoundary.
