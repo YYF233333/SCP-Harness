@@ -9,6 +9,9 @@ execution-plan hash was `c99d4c1c3dfe742c2c012e1481bc58aeb8742b7bad141d3c8cf5392
 Each configured executable runs as the unprivileged `scp` user in the dedicated
 `SCP-Worker` WSL2 distro. Protected tests run separately in `SCP-Test`. Core supplies these environment variables to worker Attempts:
 
+The [execution boundary](execution-boundary.md) is enforced by Core and the OS.
+Provider sandbox/approval profiles have no role in SCP workspace permissions.
+
 | Variable | Path |
 | --- | --- |
 | `SCP_INPUT` | `/scp/attempt/input.json` |

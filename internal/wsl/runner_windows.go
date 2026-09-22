@@ -4,12 +4,16 @@ package wsl
 
 import (
 	"context"
+	_ "embed"
 	"io"
 	"time"
 
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/model"
 )
+
+//go:embed isolation.py
+var workerIsolation string
 
 func (r Runner) Root() string { return r.Config.WSL.Root }
 
@@ -29,9 +33,15 @@ func (r Runner) Run(ctx context.Context, user string, args []string, in io.Reade
 }
 
 func (r Runner) Check(ctx context.Context) error {
-	args := []string{"sh", "-c", `test -z "$WSL_INTEROP" && test ! -d /mnt/c/Windows && test "$(id -u scp)" -ne 0 && command -v python3 >/dev/null && command -v tar >/dev/null && ! mount | grep -q ' type 9p .*path=[A-Za-z]:' && python3 -c 'import configparser; c=configparser.ConfigParser(); c.read("/etc/wsl.conf"); assert all(c.getboolean(s,k) is False for s,k in [("automount","enabled"),("automount","mountFsTab"),("interop","enabled"),("interop","appendWindowsPath")])'`}
+	check := `test -z "$WSL_INTEROP" && test ! -d /mnt/c/Windows && test "$(id -u scp)" -ne 0 && command -v python3 >/dev/null && command -v tar >/dev/null && ! mount | grep -q ' type 9p .*path=[A-Za-z]:' && python3 -c 'import configparser; c=configparser.ConfigParser(); c.read("/etc/wsl.conf"); assert all(c.getboolean(s,k) is False for s,k in [("automount","enabled"),("automount","mountFsTab"),("interop","enabled"),("interop","appendWindowsPath")])'`
+	if !r.Protected {
+		// WSL boot.command runs asynchronously. Do not admit a worker before
+		// root has finished installing the volatile mounts and OS permissions.
+		check = `while test ! -f /run/scp-worker-ready; do sleep 0.1; done; ` + check + ` && exec python3 -c "$1"`
+	}
+	args := []string{"sh", "-c", check, "scp-isolation", workerIsolation}
 	x, e := r.Control(ctx, args, nil, nil, 65536)
-	if e != nil || x.ExitCode != 0 || x.TimedOut {
+	if e != nil || x.ExitCode != 0 || x.TimedOut || x.Canceled {
 		return model.Err("RUNNER_UNAVAILABLE", "runner isolation/start verification: %v: %s", e, x.Stderr)
 	}
 	return nil

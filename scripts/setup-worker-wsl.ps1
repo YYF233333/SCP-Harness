@@ -30,6 +30,10 @@ CONFIG
 foreach ($name in $Distro) {
     $script -replace "`r", '' | wsl -d $name -u root --cd / --exec sh -c "sed 's/\r$//' | sh"
     if ($LASTEXITCODE -ne 0) { throw "Dedicated $name configuration failed" }
+    if ($name -eq 'SCP-Worker') {
+        Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'worker-runtime-start.sh') | wsl -d $name -u root --cd / --exec sh -c "sed 's/\r$//' > /opt/scp-workers/runtime-start && chown root:root /opt/scp-workers/runtime-start && chmod 755 /opt/scp-workers/runtime-start && sed -i '/^systemd=false/a command=/opt/scp-workers/runtime-start' /etc/wsl.conf"
+        if ($LASTEXITCODE -ne 0) { throw 'SCP-Worker volatile runtime configuration failed' }
+    }
     wsl --terminate $name
     if ($LASTEXITCODE -ne 0) { throw "Dedicated $name termination failed" }
     wsl -d $name -u scp --cd / --exec sh -c 'test -z "$WSL_INTEROP" && ! mount | grep -q " type 9p .*path=[A-Za-z]:" && test ! -d /mnt/c/Windows'
