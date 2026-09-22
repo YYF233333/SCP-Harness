@@ -154,13 +154,13 @@ func testFrozenVortonA10(t *testing.T) {
 	c, repo := integrationCore(t, "vorton")
 	ctx := context.Background()
 	engine := New(c)
-	t1, e := c.CreateTask(ctx, "build an agent-native language", repo, "refs/heads/main", c.Operator().ID, 600000)
+	t1, e := c.CreateTask(ctx, "build an agent-native language", repo, "refs/heads/main", c.Operator().ID, 1800000)
 	if e != nil {
 		t.Fatal(e)
 	}
 	r0 := t1.SHA
 	s := state(t, c)
-	if t1.Status != "ACTIVE" || s.Accounts[t1.ID].Remaining != 600000 || t1.Resources.Minted != 600000 || s.Exploration[t1.ID].Done {
+	if t1.Status != "ACTIVE" || s.Accounts[t1.ID].Remaining != 1800000 || t1.Resources.Minted != 1800000 || s.Exploration[t1.ID].Done {
 		t.Fatal("CP0")
 	}
 	t.Log("CP0 PASS")
@@ -189,7 +189,7 @@ func testFrozenVortonA10(t *testing.T) {
 			t.Fatal("dedup minted allocation")
 		}
 	}
-	if s.Accounts[t1.ID].Remaining != 600000-s.Tasks[t1.ID].Resources.Charged {
+	if s.Accounts[t1.ID].Remaining != 1800000-s.Tasks[t1.ID].Resources.Charged {
 		t.Fatal("CP1 metering")
 	}
 	t.Log("CP1 PASS")
@@ -205,10 +205,11 @@ func testFrozenVortonA10(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	// Keep the frozen budget anchor: the zero-transfer refinement is inert.
+	// Refinement supersedes the old Option; the new descendant remains unfunded.
 	if refined.Children[0].Remaining != 0 {
 		t.Fatal("refine moved budget")
 	}
+	om = refined.Children[0]
 	s = state(t, c)
 	beforeRoot := s.Accounts[t1.ID].Remaining
 	if _, e = c.Allocate(om.ID, 240000); e != nil {
@@ -228,11 +229,13 @@ func testFrozenVortonA10(t *testing.T) {
 	if _, e = c.ReleaseOption(om.ID); e != nil {
 		t.Fatal(e)
 	}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 7; i++ {
 		step(t, engine)
 	}
+	authorizePromotion(t, c, t1.ID)
+	step(t, engine)
 	s = state(t, c)
-	if s.Pending[t1.ID] != nil || s.Tasks[t1.ID].SHA == r0 || s.Options[om.ID].Status != "OPEN" {
+	if nextChangeStep(s, t1.ID) != nil || s.Tasks[t1.ID].SHA == r0 || s.Options[om.ID].Status != "OPEN" {
 		t.Fatal("CP3 promotion chain")
 	}
 	r1 := s.Tasks[t1.ID].SHA
@@ -254,7 +257,7 @@ func testFrozenVortonA10(t *testing.T) {
 			t.Fatal("CP3 base provenance")
 		}
 	}
-	if s.Tests[arts[1].ID].Outcome != "PASS" || s.Tests[arts[2].ID].Outcome != "PASS" || s.Reviews[arts[1].ID].Verdict != "REJECT" || s.Reviews[arts[2].ID].Verdict != "APPROVE" {
+	if s.LatestCI(arts[1].ID).Status != "PASS" || s.LatestCI(arts[2].ID).Status != "PASS" || s.Reviews[arts[1].ID].Verdict != "REJECT" || s.Reviews[arts[2].ID].Verdict != "APPROVE" {
 		t.Fatal("CP3 review sequence")
 	}
 	if len(s.Reviews[arts[1].ID].Findings) != 1 || s.Reviews[arts[1].ID].Findings[0] != "missing-final-fix" {
@@ -278,7 +281,7 @@ func testFrozenVortonA10(t *testing.T) {
 		t.Fatal(e)
 	}
 	s = state(t, c)
-	if s.Options[om.ID].Status != "CLOSED" || s.Accounts[om.ID].Remaining != 0 || s.Accounts[t1.ID].Remaining != root+remaining || s.Tasks[t1.ID].Resources.Retired != 0 {
+	if s.Options[om.ID].Status != "CLOSED" || s.Accounts[om.ID].Remaining != 0 || s.Accounts[t1.ID].Remaining != root || s.Accounts[om.Parent].Remaining != remaining || s.Tasks[t1.ID].Resources.Retired != 0 {
 		t.Fatal("CP4")
 	}
 	t.Log("CP4 PASS")
@@ -329,7 +332,7 @@ func testFrozenVortonA10(t *testing.T) {
 		t.Fatal("CP6 terminal/capture")
 	}
 	s = state(t, c)
-	if s.Options[bad.ID].Status != "OPEN" || s.Pending[t1.ID] != nil || artifactText(t, s.Artifacts[*interrupted.ArtifactID], "bad.txt") != "interrupted\n" {
+	if s.Options[bad.ID].Status != "OPEN" || nextChangeStep(s, t1.ID) != nil || artifactText(t, s.Artifacts[*interrupted.ArtifactID], "bad.txt") != "interrupted\n" {
 		t.Fatal("CP6 semantics")
 	}
 	r, e := c.Runner.Control(ctx, []string{"sh", "-c", "for pid in " + strings.Join(strings.Fields(pids), " ") + "; do test ! -e /proc/$pid/stat || test $(awk '{print $3}' /proc/$pid/stat) = Z || echo $pid; done"}, nil, nil, 4096)
@@ -342,11 +345,11 @@ func testFrozenVortonA10(t *testing.T) {
 	}
 	s = state(t, c)
 	frozen, _ := json.Marshal(s.Options)
-	if s.Tasks[t1.ID].Status != "SUSPENDED" || s.Pending[t1.ID] != nil {
+	if s.Tasks[t1.ID].Status != "SUSPENDED" || nextChangeStep(s, t1.ID) != nil {
 		t.Fatal("CP7")
 	}
 	t.Log("CP7 PASS")
-	t2, e := c.CreateTask(ctx, "emergency hotfix", repo, "refs/heads/main", c.Operator().ID, 120000)
+	t2, e := c.CreateTask(ctx, "emergency hotfix", repo, "refs/heads/main", c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -358,9 +361,11 @@ func testFrozenVortonA10(t *testing.T) {
 	if _, e = c.ReleaseOption(oe.ID); e != nil {
 		t.Fatal(e)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		step(t, engine)
 	}
+	authorizePromotion(t, c, t2.ID)
+	step(t, engine)
 	s = state(t, c)
 	r2 := s.Tasks[t2.ID].SHA
 	if r2 == r1 || s.Options[oe.ID].Status != "OPEN" {
@@ -407,7 +412,7 @@ func testFrozenVortonA10(t *testing.T) {
 			t.Fatal("CP9 terminal conservation")
 		}
 	}
-	if s.Tasks[t1.ID].Resources.Minted != 600000 || s.Tasks[t2.ID].Resources.Minted != 120000 {
+	if s.Tasks[t1.ID].Resources.Minted != 1800000 || s.Tasks[t2.ID].Resources.Minted != 1320000 {
 		t.Fatal("implicit mint")
 	}
 	if s.Slot.State != "IDLE" {
@@ -434,7 +439,7 @@ func testRealWorkerLifecycle(t *testing.T) {
 	}{{"success-worker", "RETURNED", true}, {"crash-worker", "CRASHED", true}, {"exit-127-worker", "CRASHED", true}, {"timeout-worker", "TIMED_OUT", true}, {"missing-result-worker", "RETURNED", true}, {"invalid-json-worker", "RETURNED", true}, {"huge-output-worker", "RETURNED", true}, {"worker-unavailable", "TERMINATED", true}, {"special-worker", "RETURNED", false}, {"malicious-git-worker", "RETURNED", true}} {
 		t.Run(tc.mode, func(t *testing.T) {
 			c, repo := integrationCore(t, "success-worker")
-			task, e := c.CreateTask(context.Background(), tc.mode, repo, "refs/heads/main", c.Operator().ID, 120000)
+			task, e := c.CreateTask(context.Background(), tc.mode, repo, "refs/heads/main", c.Operator().ID, 1320000)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -521,5 +526,39 @@ func testRealWorkerLifecycle(t *testing.T) {
 			}
 			t.Log(fmt.Sprintf("%s real lifecycle PASS", tc.mode))
 		})
+	}
+}
+
+func changeFor(s *model.State, task string) *model.Change {
+	var latest *model.Change
+	for _, ch := range s.Changes {
+		if ch.TaskID == task && (latest == nil || ch.Created > latest.Created) {
+			latest = ch
+		}
+	}
+	return latest
+}
+func nextChangeStep(s *model.State, task string) *model.Step {
+	ch := changeFor(s, task)
+	if ch == nil || ch.State != "QUEUED" && ch.State != "RUNNING" {
+		return nil
+	}
+	if ch.Stage == "AWAIT_PROMOTION" {
+		return &model.Step{ChangeID: ch.ID, TaskID: task, OptionID: ch.OptionID, TargetType: "ARTIFACT", TargetID: ch.ArtifactID, Operation: "await_promotion"}
+	}
+	return core.ChangeStep(ch)
+}
+func authorizePromotion(t *testing.T, c *core.Core, task string) {
+	t.Helper()
+	s := state(t, c)
+	ch := changeFor(s, task)
+	if ch == nil || ch.Stage != "AWAIT_PROMOTION" {
+		t.Fatalf("not awaiting explicit promotion: %+v", ch)
+	}
+	if fixtureGit(t, s.Tasks[task].RepoPath, "rev-parse", s.Tasks[task].RepoRef) != ch.BaseSHA {
+		t.Fatal("authority changed before explicit promotion")
+	}
+	if _, e := c.ChangeAction(context.Background(), ch.ID, "promote"); e != nil {
+		t.Fatal(e)
 	}
 }

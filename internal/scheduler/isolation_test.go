@@ -36,7 +36,7 @@ func Test10000CommitSyntheticHistory(t *testing.T) {
 	if e != nil || r.ExitCode != 0 {
 		t.Fatalf("history fixture: %v %s", e, r.Stderr)
 	}
-	task, e := c.CreateTask(context.Background(), "history isolation", repo, "refs/heads/main", c.Operator().ID, 120000)
+	task, e := c.CreateTask(context.Background(), "history isolation", repo, "refs/heads/main", c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -101,7 +101,7 @@ func TestUnauthorizedReviewAndOneTimeIndependentExploration(t *testing.T) {
 	c.Config.Cards["reviewer"] = card
 	step(t, engine)
 	s := state(t, c)
-	if s.Reviews[a.ID].Verdict != "REJECT" || s.Pending[task.ID].Operation != "mutation" {
+	if s.Reviews[a.ID] != nil || changeFor(s, task.ID).State != "BLOCKED" {
 		t.Fatal("unauthorized review acquired authority")
 	}
 	if e := c.Release(engine.Owner); e != nil {
@@ -112,7 +112,7 @@ func TestUnauthorizedReviewAndOneTimeIndependentExploration(t *testing.T) {
 	}
 	c.Config.Exploration.N = 2
 	c.Config.Workers[2].Command = []string{fixtureWorker(t), "generate-one-worker"}
-	second, e := c.CreateTask(context.Background(), "two fresh explorers", task.RepoPath, task.RepoRef, c.Operator().ID, 120000)
+	second, e := c.CreateTask(context.Background(), "two fresh explorers", task.RepoPath, task.RepoRef, c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -130,7 +130,7 @@ func TestUnauthorizedReviewAndOneTimeIndependentExploration(t *testing.T) {
 }
 func TestExecutableModeSurvivesCaptureTestReviewAndPromotion(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
-	task, e := c.CreateTask(context.Background(), "executable mode", repo, "refs/heads/main", c.Operator().ID, 120000)
+	task, e := c.CreateTask(context.Background(), "executable mode", repo, "refs/heads/main", c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -149,9 +149,11 @@ func TestExecutableModeSurvivesCaptureTestReviewAndPromotion(t *testing.T) {
 	c.Config.Workers[0].Command = []string{fixtureWorker(t), "executable-worker"}
 	c.Config.Workers[1].Command = []string{fixtureWorker(t), "fake-reviewer-approve"}
 	c.Config.Test.Command = []string{"./run.sh"}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		step(t, engine)
 	}
+	authorizePromotion(t, c, task.ID)
+	step(t, engine)
 	s := state(t, c)
 	if s.Tasks[task.ID].SHA == task.SHA {
 		t.Fatal("executable script failed protected test/promotion")

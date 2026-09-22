@@ -11,18 +11,18 @@ Core remains provider-opaque. Role names are provenance labels; authority comes
 from role-card context and capabilities.
 
 - `option_generation`, `merge_judge`, and `merge_synth` use an Explorer profile
-  with `workspace=none`.
+  with `workspace=readonly` and `repository.read` for source investigation.
 - `discussion` uses a separate readonly authoritative-source profile with
   synthetic_git=false and Task-root resource anchor.
 - `mutation` uses a Builder profile with a writable synthetic workspace.
 - `review` uses a Reviewer profile with a read-only submitted Artifact workspace
-  and visibility of the protected-test result.
+  and visibility of the CI evidence.
 
 Provider, model, prompt, and reasoning bindings are deployment concerns outside
 Core. These profiles do not change the normative specification.
 
 Each configured executable runs as the unprivileged `scp` user in the dedicated
-`SCP-Worker` WSL2 distro. Protected tests run separately in `SCP-Test`. Core supplies these environment variables to worker Attempts:
+`SCP-Worker` WSL2 distro. CI run separately in `SCP-Test`. Core supplies these environment variables to worker Attempts:
 
 The [execution boundary](execution-boundary.md) is enforced by Core and the OS.
 Provider sandbox/approval profiles have no role in SCP workspace permissions.
@@ -59,9 +59,8 @@ are in specification §14. A minimal mutation result is:
 ```
 
 The other dispositions are `CONTINUE_FINAL` and `PROMOTE_FINAL`. Missing/invalid
-mutation results still retain a bounded capture when possible, with DROP semantics.
-Every workspace use is a fresh copy. Read-only reviewers cannot patch it. Protected
-tests receive a separate writable copy; their output files never enter promotion.
+mutation results still retain a bounded capture when possible, with the Change BLOCKED; no evidence-free auto retry.
+Every workspace use is a fresh copy. Read-only reviewers cannot patch it. CI receive a separate writable copy; their output files never enter promotion.
 
 Workers may request Claims but cannot choose issuer, provenance, allocation or
 new-object IDs. Exact `resource.propose` requires both `claim.publish` and
@@ -105,5 +104,12 @@ and never retries automatically; the human comment remains. Discussion cannot
 produce Artifacts, new Options, allocations, release, patch or verdict.
 
 No worker result, new_options entry or Claim can release an Option. Funding never
-starts work. Only explicit host option.release creates a fresh mutation Pending;
-review APPROVE can only promote the current Artifact in that already released chain.
+starts work. Only explicit host option.release creates a new Change. CI PASS + review APPROVE enters AWAIT_PROMOTION; explicit host change.promote is required before repository CAS.
+
+## CI evidence and interruption (v0.2)
+
+ci.result is a directory, not a host path: result.json, stdout.log and stderr.log are bounded actual content. result.json includes stdout_truncated, stderr_truncated and effective timeout/command/config hash. Rework also receives review.findings and the previous Artifact. CI is a CIRun, never an agent Attempt, and produces neither Claim nor Artifact.
+
+An interrupted mutation is captured and its Change pauses at the same stage. Resume restores the current Artifact. Agent failure/invalid output without useful evidence blocks instead of looping; repeated CI TIMEOUT blocks before further review/rework. Only explicit abort abandons the Change.
+
+The runner removes inherited SCP_* runtime variables before each launch. Worker Attempts then receive fresh SCP_INPUT/SCP_CONTEXT/SCP_WORKSPACE/SCP_RESULT. CI receives none of these worker variables. Go and other fixed toolchains must be preinstalled in their execution environments, never installed per Attempt.

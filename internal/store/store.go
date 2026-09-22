@@ -49,7 +49,7 @@ func OpenReadOnly(path string) (*Store, error) {
 		db.Close()
 		return nil, storage(e)
 	}
-	if version != 0 {
+	if version != 2 {
 		db.Close()
 		return nil, model.Err("CORE_INCONSISTENT", "unsupported database schema %d", version)
 	}
@@ -98,7 +98,7 @@ func Open(path string, init bool) (*Store, error) {
 	if e = db.QueryRow("SELECT version FROM schema_version").Scan(&v); e != nil {
 		return fail(storage(e))
 	}
-	if v != 0 {
+	if v != 2 {
 		return fail(model.Err("CORE_INCONSISTENT", "unsupported database schema %d", v))
 	}
 	if _, e = s.Read(); e != nil {
@@ -267,6 +267,9 @@ func (s *Store) EmergencyBlock(kind, message string) error {
 	return nil
 }
 func immutable(a, b *model.State) error {
+	if e := immutableChanges(a, b); e != nil {
+		return e
+	}
 	for id, old := range a.Options {
 		n := b.Options[id]
 		if n == nil {
@@ -274,6 +277,7 @@ func immutable(a, b *model.State) error {
 		}
 		x, y := *old, *n
 		x.Status = y.Status
+		x.CloseReason = y.CloseReason
 		x.Remaining = y.Remaining
 		if x != y {
 			return model.Err("CORE_INCONSISTENT", "immutable Option altered")
@@ -297,7 +301,7 @@ func immutable(a, b *model.State) error {
 		if n == nil {
 			return model.Err("CORE_INCONSISTENT", "Attempt deletion")
 		}
-		if old.ID != n.ID || old.TaskID != n.TaskID || old.Operation != n.Operation || old.TargetType != n.TargetType || old.TargetID != n.TargetID || old.AnchorID != n.AnchorID || old.AnchorType != n.AnchorType || old.Lease != n.Lease || old.SHA != n.SHA || old.Revision != n.Revision || old.Actor != n.Actor || old.Profile != n.Profile {
+		if old.Objective != n.Objective || old.ChangeID != n.ChangeID || old.ID != n.ID || old.TaskID != n.TaskID || old.Operation != n.Operation || old.TargetType != n.TargetType || old.TargetID != n.TargetID || old.AnchorID != n.AnchorID || old.AnchorType != n.AnchorType || old.Lease != n.Lease || old.SHA != n.SHA || old.Revision != n.Revision || old.Actor != n.Actor || old.Profile != n.Profile {
 			return model.Err("CORE_INCONSISTENT", "Attempt identity changed")
 		}
 	}
@@ -305,7 +309,7 @@ func immutable(a, b *model.State) error {
 }
 func Validate(s *model.State) error {
 	bad := func(msg string) error { return model.Err("CORE_INCONSISTENT", "%s", msg) }
-	if s.Tasks == nil || s.Accounts == nil || s.Options == nil || s.Leases == nil || s.Claims == nil || s.Artifacts == nil || s.Attempts == nil || s.Pending == nil || s.Exploration == nil || s.Tests == nil || s.Reviews == nil || s.Interrupts == nil || s.Cancellations == nil || s.RepositoryIdentities == nil {
+	if s.Changes == nil || s.CIRuns == nil || s.Tasks == nil || s.Accounts == nil || s.Options == nil || s.Leases == nil || s.Claims == nil || s.Artifacts == nil || s.Attempts == nil || s.Pending == nil || s.Exploration == nil || s.Reviews == nil || s.Interrupts == nil || s.Cancellations == nil || s.RepositoryIdentities == nil {
 		return bad("missing state maps")
 	}
 	for id, v := range s.Tasks {
@@ -442,6 +446,9 @@ func Validate(s *model.State) error {
 		if s.Tasks[j.TaskID] == nil || s.Artifacts[j.ArtifactID] == nil {
 			return bad("dangling promotion journal")
 		}
+	}
+	if e := validateChanges(s); e != nil {
+		return e
 	}
 	// Refresh on a copy verifies the persisted projections were not corrupted.
 	expected := map[string]model.Resources{}

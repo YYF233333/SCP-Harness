@@ -16,6 +16,10 @@
     {
       "name": "process.execute",
       "scope": "lease.sandbox"
+    },
+    {
+      "name": "repository.read",
+      "scope": "task.repository"
     }
   ],
   "limits": {

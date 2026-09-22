@@ -50,9 +50,9 @@ func testCrossProcessControl(t *testing.T) {
 	// Seed a valid Task without invoking Git/WSL: the concurrent CLI processes
 	// operate the real SQLite database and Core control/settlement transactions.
 	if e = c.Store.Update(func(s *model.State) error {
-		s.Tasks[taskID] = &model.Task{ID: taskID, Status: "ACTIVE", RepoPath: filepath.Join(dir, "repo"), RepoRef: "refs/heads/main", SHA: strings.Repeat("a", 40), Resources: model.Resources{Minted: 10000}, Created: model.Now()}
+		s.Tasks[taskID] = &model.Task{ID: taskID, Status: "ACTIVE", RepoPath: filepath.Join(dir, "repo"), RepoRef: "refs/heads/main", SHA: strings.Repeat("a", 40), Resources: model.Resources{Minted: 1210000}, Created: model.Now()}
 		s.RepositoryIdentities[taskID] = filepath.Join(dir, "repo")
-		s.Accounts[taskID] = &model.Account{TaskID: taskID, Remaining: 10000}
+		s.Accounts[taskID] = &model.Account{TaskID: taskID, Remaining: 1210000}
 		s.Exploration[taskID] = &model.Exploration{Done: true}
 		return nil
 	}); e != nil {

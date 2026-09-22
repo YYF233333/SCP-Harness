@@ -40,11 +40,11 @@ func TestCodexExecutionBoundary(t *testing.T) {
 	fixtureGit(t, repo, "add", ".")
 	fixtureGit(t, repo, "-c", "user.name=fixture", "-c", "user.email=fixture@local", "commit", "-m", "boundary fixture")
 	objective := `CONTEXT-boundary-v1. Implement greet(name) by stripping whitespace and returning 'Hello, <name>!' or 'Hello, world!' for blank input.
-For option_generation, propose exactly one direction: direct whitespace stripping with a fallback name. For every workspace=none operation, first run a shell check that SCP_WORKSPACE does not exist and print SCP_NONE_OK; never create a workspace.
+For option_generation, propose exactly one direction: direct whitespace stripping with a fallback name. For every option_generation, merge_judge and merge_synth operation, inspect the readonly source and run python3 -B boundary_probe.py, verifying SCP_READONLY_OK before your answer.
 For mutation, implement greeting.py, run python3 -B -m unittest -v, compile greeting.py with py_compile output under TMPDIR, and run python3 -B boundary_probe.py. Keep the fixture tests and probe unchanged; submit PROMOTE_FINAL when they pass.
 For discussion, read the human question and source, run python3 -B boundary_probe.py and verify SCP_READONLY_OK, then answer with reasons, risks and recommendation.
-For review, read every candidate file and protected-test evidence, run python3 -B -m unittest -v, and run python3 -B boundary_probe.py. The probe is an authorized OS boundary test: it must actively attempt opening input/context/candidate paths for write and observe EACCES. It is not a request to implement changes. Verify its SCP_READONLY_OK output before giving a verdict.`
-	task, e := c.CreateTask(context.Background(), objective, repo, "refs/heads/main", c.Operator().ID, 7200000)
+For review, read every candidate file and CI evidence under context/ci.result/ including result.json, stdout.log and stderr.log, run python3 -B -m unittest -v, and run python3 -B boundary_probe.py. The probe is an authorized OS boundary test: it must actively attempt opening input/context/candidate paths for write and observe EACCES. It is not a request to implement changes. Verify its SCP_READONLY_OK output before giving a verdict.`
+	task, e := c.CreateTask(context.Background(), objective, repo, "refs/heads/main", c.Operator().ID, 8400000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -52,11 +52,7 @@ For review, read every candidate file and protected-test evidence, run python3 -
 	// Two fresh generations, a semantic partition, and its synthesis.
 	for _, expected := range []string{"option_generation", "option_generation", "merge_judge", "merge_synth"} {
 		step(t, engine)
-		checkCodexAttempt(t, engine, expected, "SCP_NONE_OK")
-		r, err := c.Runner.Control(context.Background(), []string{"test", "!", "-e", "/scp/attempt/workspace"}, nil, nil, 1024)
-		if err != nil || r.ExitCode != 0 {
-			t.Fatal("none operation created workspace", err)
-		}
+		checkCodexAttempt(t, engine, expected, "SCP_READONLY_OK {")
 	}
 	option, e := c.Propose(task.ID, "Implement the direct greeting function and the requested boundary evidence.", "")
 	if e != nil {
@@ -89,8 +85,8 @@ For review, read every candidate file and protected-test evidence, run python3 -
 	step(t, engine)
 	checkCodexAttempt(t, engine, "mutation", "")
 	s := state(t, c)
-	pending := s.Pending[task.ID]
-	if pending == nil || pending.Operation != "protected_test" {
+	pending := nextChangeStep(s, task.ID)
+	if pending == nil || pending.Operation != "ci" {
 		t.Fatal("mutation did not produce a candidate")
 	}
 	candidate := s.Artifacts[pending.TargetID]
@@ -113,7 +109,7 @@ For review, read every candidate file and protected-test evidence, run python3 -
 		t.Fatal(e)
 	}
 	step(t, engine) // Real protected tests in SCP-Test.
-	if state(t, c).Tests[candidate.ID].Outcome != "PASS" {
+	if state(t, c).LatestCI(candidate.ID).Status != "PASS" {
 		t.Fatal("protected test failed")
 	}
 	step(t, engine) // Independent model in root-owned readonly candidate.
@@ -129,7 +125,8 @@ For review, read every candidate file and protected-test evidence, run python3 -
 	if e != nil || string(blob) != string(after) {
 		t.Fatal("candidate Artifact changed", e)
 	}
-	step(t, engine) // Commit the first approved Artifact through production CAS.
+	authorizePromotion(t, c, task.ID)
+	step(t, engine) // Explicitly authorized production CAS.
 	firstSHA := state(t, c).Tasks[task.ID].SHA
 	if firstSHA == task.SHA {
 		t.Fatal("H3 first promotion missing")
@@ -141,15 +138,16 @@ For review, read every candidate file and protected-test evidence, run python3 -
 	}
 	step(t, engine)
 	checkCodexAttempt(t, engine, "mutation", "")
-	if p := state(t, c).Pending[task.ID]; p == nil || p.Operation != "protected_test" {
+	if p := nextChangeStep(state(t, c), task.ID); p == nil || p.Operation != "ci" {
 		t.Fatal("second cycle did not submit")
 	}
 	step(t, engine)
 	step(t, engine)
 	checkCodexAttempt(t, engine, "review", "SCP_READONLY_OK {")
-	if p := state(t, c).Pending[task.ID]; p == nil || p.Operation != "promotion" {
+	if p := nextChangeStep(state(t, c), task.ID); p == nil || p.Operation != "await_promotion" {
 		t.Fatal("second cycle not approved")
 	}
+	authorizePromotion(t, c, task.ID)
 	step(t, engine)
 	if s := state(t, c); s.Tasks[task.ID].SHA == firstSHA || s.Options[option.ID].Status != "OPEN" || s.Options[option.ID].Remaining <= 0 {
 		t.Fatal("second promotion")

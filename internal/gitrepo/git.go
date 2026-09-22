@@ -111,7 +111,16 @@ func (g *Git) Snapshot(ctx context.Context, repo, sha, root, keep string) (resul
 		if e != nil {
 			return artifact.StorageError("snapshot archive", e)
 		}
-		_, e = io.Copy(dst, f)
+		// Git's global PAX header with no following entry is rejected by Python's
+		// streaming tar reader. An empty validated tree needs only tar EOF blocks.
+		entries, readErr := os.ReadDir(root)
+		if readErr != nil {
+			e = readErr
+		} else if len(entries) == 0 {
+			e = tar.NewWriter(dst).Close()
+		} else {
+			_, e = io.Copy(dst, f)
+		}
 		ce := dst.Close()
 		if e != nil {
 			return artifact.StorageError("snapshot archive copy", e)

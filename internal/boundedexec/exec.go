@@ -25,6 +25,7 @@ type Command struct {
 	StderrSink io.Writer
 }
 type Result struct {
+	StdoutTruncated, StderrTruncated            bool
 	Stdout, Stderr                              []byte
 	ExitCode                                    int
 	Started, TimedOut, Canceled, OutputExceeded bool
@@ -104,6 +105,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	r.Elapsed = time.Since(start)
 	r.Stdout = out.Bytes()
 	r.Stderr = errout.Bytes()
+	r.StdoutTruncated, r.StderrTruncated = ow.exceeded, ew.exceeded
 	r.OutputExceeded = ow.exceeded || ew.exceeded
 	r.TimedOut = errors.Is(timed.Err(), context.DeadlineExceeded)
 	r.Canceled = ctx.Err() != nil

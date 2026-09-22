@@ -151,9 +151,9 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	}
 	git("add", "README.md")
 	git("-c", "user.name=fixture", "-c", "user.email=fixture@local", "commit", "-m", "base")
-	taskKeys := "id objective repo_path repo_ref responsible_actor_id status current_authoritative_sha state_revision resources created_at updated_at"
+	taskKeys := "id objective objective_revision repo_path repo_ref responsible_actor_id status current_authoritative_sha state_revision resources created_at updated_at"
 	optionKeys := "id task_id text status resource_parent_id remaining_wall_ms created_against_repo_sha created_against_state_revision created_by_actor created_at"
-	task := call(0, "task", "create", "--objective", "golden", "--repo", repo, "--ref", "refs/heads/main", "--responsible-actor", cfg.Operator, "--wall-ms", "10000")
+	task := call(0, "task", "create", "--objective", "golden", "--repo", repo, "--ref", "refs/heads/main", "--responsible-actor", cfg.Operator, "--wall-ms", "1210000")
 	keys(t, task, taskKeys)
 	keys(t, task["resources"], "total_minted_wall_ms remaining_wall_ms outstanding_lease_wall_ms total_charged_wall_ms retired_wall_ms")
 	taskID := task["id"].(string)
@@ -164,7 +164,7 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	if value := call(3, "task", "create", "--objective", "duplicate", "--repo", subdir, "--ref", "refs/heads/main", "--responsible-actor", cfg.Operator, "--wall-ms", "100"); value["code"] != "PRECONDITION_FAILED" {
 		t.Fatal("repository alias bypassed active binding")
 	}
-	keys(t, call(0, "task", "show", taskID), taskKeys)
+	keys(t, call(0, "task", "show", taskID)["task"], taskKeys)
 	keys(t, call(0, "task", "extend", taskID, "--wall-ms", "1"), taskKeys)
 	option := call(0, "option", "propose", "--task", taskID, "--text", "parent")
 	keys(t, option, optionKeys)
@@ -180,7 +180,7 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	keys(t, call(0, "option", "comment", id, "--text", "why?"), claimKeys)
 	thread := call(0, "option", "thread", id)
 	keys(t, thread, "option messages")
-	keys(t, thread["option"], optionKeys)
+	keys(t, thread["option"], optionKeys+" close_reason")
 	keys(t, thread["messages"].([]any)[0], claimKeys)
 	var human, humanErr bytes.Buffer
 	if run([]string{"--config", path, "option", "thread", id}, &human, &humanErr) != 0 || !strings.Contains(human.String(), "] O5-1:\nwhy?\n") {
@@ -192,7 +192,10 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	if value := call(2, "option", "discuss", id); value["code"] != "USAGE_ERROR" {
 		t.Fatal(value)
 	}
-	refined := call(0, "option", "refine", id, "--text", "child", "--transfer-wall-ms", "100")
+	id = zero["id"].(string)
+	call(0, "option", "allocate", id, "--wall-ms", "5000")
+	refined := call(0, "option", "refine", id, "--text", "child", "--transfer-wall-ms", "5000")
+	id = refined["id"].(string)
 	keys(t, refined, optionKeys)
 	spec := filepath.Join(dir, "split.json")
 	if e = os.WriteFile(spec, []byte(`{"children":[{"text":"a","wall_ms":100},{"text":"b","wall_ms":200}]}`), 0600); e != nil {
@@ -220,27 +223,20 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	if e = c.Store.Update(func(s *model.State) error { s.Exploration[taskID].Done = true; return nil }); e != nil {
 		t.Fatal(e)
 	}
-	keys(t, call(0, "option", "release", id), optionKeys)
-	if value := call(4, "option", "discuss", id, "--text", "blocked"); value["code"] != "BLOCKED" {
-		t.Fatal(value)
-	}
-	// End this queued chain explicitly, then queue one bounded discussion.
-	p := model.Step{TaskID: taskID, OptionID: id, Operation: "mutation", TargetType: "OPTION", TargetID: id}
-	if e = c.EndPromotion(p, "", "test chain ended"); e != nil {
-		t.Fatal(e)
+	change := call(0, "option", "release", id)
+	if change["stage"] != "MUTATION" || change["state"] != "QUEUED" {
+		t.Fatal("release Change projection", change)
 	}
 	discussion := call(0, "option", "discuss", id, "--text", "explain")
 	keys(t, discussion, "comment queued")
 	keys(t, discussion["comment"], claimKeys)
 	if discussion["queued"] != true {
-		t.Fatal("queued must be true")
+		t.Fatal("discussion not queued")
 	}
-	if value := call(4, "option", "release", id); value["code"] != "BLOCKED" {
+	if value := call(3, "option", "release", id); value["code"] != "INVALID_STATE" {
 		t.Fatal(value)
 	}
-	if e = c.EndPromotion(p, "", "test discussion ended"); e != nil {
-		t.Fatal(e)
-	}
+	call(0, "change", "abort", change["id"].(string))
 	attemptID, artifactID := model.ID(), model.ID()
 	blob := make([]byte, 1024)
 	blobPath := filepath.Join(dir, "blob.tar")
@@ -250,8 +246,8 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 	digest := sha256.Sum256(blob)
 	e = c.Store.Update(func(s *model.State) error {
 		now := model.Now()
-		s.Attempts[attemptID] = &model.Attempt{ID: attemptID, TaskID: taskID, Operation: "mutation", TargetType: "OPTION", TargetID: id, Actor: cfg.Operator, Profile: "operator", AnchorType: "OPTION", AnchorID: id, Lease: 1, SHA: s.Tasks[taskID].SHA, Started: now, Status: "RETURNED", Ended: &now}
-		s.Artifacts[artifactID] = &model.Artifact{ID: artifactID, TaskID: taskID, Anchor: id, AttemptID: attemptID, BlobPath: blobPath, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(blob)), BaseSHA: s.Tasks[taskID].SHA, Created: now}
+		s.Attempts[attemptID] = &model.Attempt{ChangeID: change["id"].(string), ID: attemptID, TaskID: taskID, Operation: "mutation", TargetType: "OPTION", TargetID: id, Actor: cfg.Operator, Profile: "operator", AnchorType: "OPTION", AnchorID: id, Lease: 1, SHA: s.Tasks[taskID].SHA, Started: now, Status: "RETURNED", Ended: &now}
+		s.Artifacts[artifactID] = &model.Artifact{ChangeID: change["id"].(string), ID: artifactID, TaskID: taskID, Anchor: id, AttemptID: attemptID, BlobPath: blobPath, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(blob)), BaseSHA: s.Tasks[taskID].SHA, Created: now}
 		return nil
 	})
 	if e != nil {
@@ -269,16 +265,16 @@ func TestCLIJSONFrozenProjectionsAndRestart(t *testing.T) {
 		blockerID = id
 	}
 	c.Store.Close()
-	keys(t, call(0, "attempt", "show", attemptID), "id task_id operation target_type target_id actor_instance worker_profile resource_anchor_type resource_anchor_id lease_wall_ms created_against_repo_sha created_against_state_revision started_at ended_at status exit_code termination_reason stdout_path stderr_path produced_artifact_id")
-	keys(t, call(0, "artifact", "show", artifactID), "id task_id semantic_anchor_option_id source_attempt_id blob_path sha256 size_bytes base_repo_sha created_at")
+	keys(t, call(0, "attempt", "show", attemptID), "change_id id task_id operation target_type target_id actor_instance worker_profile resource_anchor_type resource_anchor_id lease_wall_ms created_against_repo_sha created_against_state_revision started_at ended_at status exit_code termination_reason stdout_path stderr_path produced_artifact_id")
+	keys(t, call(0, "artifact", "show", artifactID), "change_id id task_id semantic_anchor_option_id source_attempt_id blob_path sha256 size_bytes base_repo_sha created_at")
 	keys(t, call(0, "artifact", "export", artifactID, "--out", filepath.Join(dir, "export.tar")), "artifact_id out sha256 size_bytes")
 	for _, name := range []string{"option", "attempt", "artifact", "claim"} {
 		keys(t, call(0, name, "list", "--task", taskID), "items")
 	}
 	keys(t, call(0, "blocker", "list", "--unresolved"), "items")
 	keys(t, call(0, "blocker", "resolve", blockerID), "id kind scope subject_id message created_at resolved_at")
-	keys(t, call(0, "status"), "fail_stop execution_slot tasks running_attempt unresolved_blockers")
-	keys(t, call(0, "option", "close", id), optionKeys)
+	keys(t, call(0, "status"), "executing_activity current_change changes queued_change_count attention_changes fail_stop execution_slot tasks running_attempt unresolved_blockers")
+	keys(t, call(0, "option", "close", id), optionKeys+" close_reason")
 	for _, action := range []string{"suspend", "resume", "close"} {
 		keys(t, call(0, "task", action, taskID), taskKeys)
 	}

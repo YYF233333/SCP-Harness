@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,7 +59,14 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 	} else if p.TargetType == "OPTION" {
 		anchor = p.TargetID
 	}
-	in := worker.Input{Version: 0, AttemptID: a.ID, Operation: a.Operation, Objective: t.Objective, Target: worker.Target{Type: p.TargetType, ID: p.TargetID}, Card: card, Origin: worker.Origin{SHA: a.SHA, Revision: a.Revision}, Context: worker.Root{Root: c.Runner.Root() + "/context"}, Workspace: worker.Workspace{Mode: profile.Workspace, Root: c.Runner.Root() + "/workspace", BaseSHA: base, ArtifactID: source, Synthetic: profile.Synthetic}, OutputSchema: a.Operation}
+	objective := a.Objective
+	if objective == "" {
+		objective = t.Objective
+	}
+	if ch := s.Changes[a.ChangeID]; ch != nil {
+		objective = ch.Objective
+	}
+	in := worker.Input{Version: 0, AttemptID: a.ID, Operation: a.Operation, Objective: objective, Target: worker.Target{Type: p.TargetType, ID: p.TargetID}, Card: card, Origin: worker.Origin{SHA: a.SHA, Revision: a.Revision}, Context: worker.Root{Root: c.Runner.Root() + "/context"}, Workspace: worker.Workspace{Mode: profile.Workspace, Root: c.Runner.Root() + "/workspace", BaseSHA: base, ArtifactID: source, Synthetic: profile.Synthetic}, OutputSchema: a.Operation}
 	if anchor != "" {
 		in.Anchor = &worker.Anchor{OptionID: anchor}
 	}
@@ -96,7 +104,7 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 	for _, channel := range card.Context {
 		switch channel {
 		case "task.objective":
-			e = add(channel, t.Objective)
+			e = add(channel, objective)
 		case "task.state":
 			e = add(channel, t)
 			visible["TASK:"+t.ID] = true
@@ -153,9 +161,15 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 					e = artifact.Restore(*submitted, dir, c.Config.Limits)
 				}
 			}
-		case "test.result":
-			if submitted != nil && s.Tests[submitted.ID] != nil {
-				e = add(channel, s.Tests[submitted.ID])
+		case "ci.result":
+			if submitted != nil {
+				run := s.LatestCI(submitted.ID)
+				if ch := s.Changes[a.ChangeID]; ch != nil && ch.CIRunID != "" {
+					run = s.CIRuns[ch.CIRunID]
+				}
+				if run != nil {
+					e = materializeCI(contextRoot, run, c.Config.Test.Output)
+				}
 			}
 		case "review.findings":
 			if submitted != nil && s.Reviews[submitted.ID] != nil {
@@ -176,4 +190,36 @@ func (c *Core) Materialize(ctx context.Context, a *model.Attempt, p model.Step, 
 		}
 	}
 	return visible, nil
+}
+
+func materializeCI(root string, run *model.CIRun, limit int64) error {
+	dir := filepath.Join(root, "ci.result")
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		return artifact.StorageError("CI context", e)
+	}
+	projected := *run
+	projected.Stdout = "stdout.log"
+	projected.Stderr = "stderr.log"
+	for _, log := range []struct {
+		src, name string
+		truncated *bool
+	}{{run.Stdout, "stdout.log", &projected.StdoutTruncated}, {run.Stderr, "stderr.log", &projected.StderrTruncated}} {
+		f, e := os.Open(log.src)
+		if e != nil {
+			return artifact.StorageError("CI evidence read", e)
+		}
+		data, e := io.ReadAll(io.LimitReader(f, limit+1))
+		f.Close()
+		if e != nil {
+			return artifact.StorageError("CI evidence read", e)
+		}
+		if int64(len(data)) > limit {
+			data = data[:limit]
+			*log.truncated = true
+		}
+		if e = os.WriteFile(filepath.Join(dir, log.name), data, 0600); e != nil {
+			return artifact.StorageError("CI evidence materialization", e)
+		}
+	}
+	return writeJSON(filepath.Join(dir, "result.json"), projected)
 }

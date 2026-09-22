@@ -6,7 +6,7 @@ All Windows development and commands below run in the original repository.
 
 ## Daily Linux and Windows release testing
 
-Daily development, CI and protected tests use Linux. In an unprivileged Linux
+Daily development, CI and CIs use Linux. In an unprivileged Linux
 session (the `scp` user in `SCP-Test`), the default commands are:
 
 ```sh
@@ -48,7 +48,7 @@ cleanup; the script prints its exact path.
 The Windows production controller keeps the authoritative repository, SQLite and
 Artifact store on Windows. Neither distro receives those production stores.
 `SCP-Worker` runs mutation, review, option generation and merge workers.
-`SCP-Test` runs protected tests and the daily Linux suite, with its own toolchain.
+`SCP-Test` runs CIs and the daily Linux suite, with its own toolchain.
 Only runtimes, required worker credentials and disposable execution files belong
 in these distros. Local integration tests create their own temporary Git/SQLite/
 Artifact fixtures inside the test environment.
@@ -66,8 +66,8 @@ appendWindowsPath=false
 ```
 
 The existing single global execution slot still serializes all work:
-`SCP-Worker mutation -> capture Artifact -> SCP-Test protected test ->
-SCP-Worker review -> promotion`. Protected tests restore a fresh writable copy,
+`SCP-Worker mutation -> capture Artifact -> SCP-Test CI ->
+SCP-Worker review -> promotion`. CI restore a fresh writable copy,
 record PASS/FAIL/timeout with the existing lease rules, then discard that copy.
 They cannot alter the Core-configured command, timeout, policy or interpretation.
 Recovery terminates and cleans both environments before releasing the slot.
@@ -121,7 +121,7 @@ sets a user-level `SCP_CONFIG` path. All `scp` command examples below also work
 with `scph`; an explicit `--config` always takes precedence.
 
 Copy `scp.example.json` to a caller-selected config file and explicitly set
-database, Artifact store, card paths, worker commands, protected test command,
+database, Artifact store, card paths, worker commands, CI command,
 all limits and timeouts. Relative host paths resolve against the config directory.
 The example's worker commands are installation locations to fill, and its protected
 test command is `go test ./...` in `SCP-Test`; provision the toolchain and module cache there before self-hosting. Set an explicit timeout and funded test budget appropriate to the daily suite.
@@ -136,7 +136,7 @@ Use the fixed, previously accepted controller (`scp.exe`) for normal work.
 
 ```powershell
 .\scp.exe --config .\scp.json --json init
-.\scp.exe --config .\scp.json --json task create --objective "Example objective" --repo C:\path\to\repo --ref refs/heads/main --responsible-actor O5-1 --wall-ms 600000
+.\scp.exe --config .\scp.json --json task create --objective "Example objective" --repo C:\path\to\repo --ref refs/heads/main --responsible-actor O5-1 --wall-ms 10800000
 .\scp.exe --config .\scp.json run
 ```
 
@@ -154,23 +154,29 @@ option allocate CHILD_ID --wall-ms 7200000
 option release CHILD_ID
 ```
 
-`discuss` queues one bounded readonly reply; normal `scp run` executes it. `comment`
-only adds information and works during an active chain. `refine` creates an immutable
-child and defaults to zero transfer; `propose` creates a fresh candidate.
-**Allocate alone never starts work.** Release requires option.release and approves
-one chain through continuation, tests, review, rework and promotion. Promotion leaves
-the Option OPEN but idle; another cycle requires another release. DROP/crash/timeout/
-interrupt also ends authorization. Recover never infers release from old balances.
+`discuss` accepts a queued readonly request even during a Change activity; it runs at the next execution boundary before Change continuations. It consumes Task-root budget. Comment/propose/refine/merge/allocation remain control-plane operations.
 
-Discuss requires option.discuss + claim.publish and Task-root budget, even for an
-unfunded Option. It is blocked by a Task's active/pending chain. To redirect active
-work: comment, optionally interrupt, wait for settlement, discuss, refine/propose,
-allocate, release. Refine/split/merge participants in Pending are blocked; allocate
-may replenish an existing chain. Use option close / task close for completion.
+Allocation never starts development. Release creates a persistent Change in MUTATION/QUEUED. Submitted Artifacts receive independent CI and readonly review; PASS + APPROVE leaves AWAIT_PROMOTION with the repository unchanged. Inspect the result and explicitly authorize promotion:
 
-`--json` emits one JSON envelope; `attempt watch` rejects it with USAGE_ERROR.
-The complete command list,
-projections, error codes and capability matrix are frozen in specification §36.
+```text
+change list --task TASK_ID
+change show CHANGE_ID
+change watch CHANGE_ID
+ci list --change CHANGE_ID
+ci show CI_RUN_ID
+ci watch CI_RUN_ID
+change promote CHANGE_ID
+```
+
+Promotion runs through the scheduler slot and Git CAS. Stale bases become STALE without merge/rebase. `change pause` and `attempt interrupt` preserve captured work; `change resume` continues the current Artifact. `change abort` permanently abandons only that Change, retaining evidence. retry-ci, retry-review and rework operate on its current owned Artifact; `ci run ARTIFACT_ID` independently revalidates without a builder.
+
+Two consecutive CI TIMEOUTs block the Change with REPEATED_CI_TIMEOUT. Investigate the actual timeout, command/config and bounded logs, then explicitly resume/retry-ci/rework. Ordinary CI failure/timeout is not an infrastructure diagnosis.
+
+Task root must retain 1200000ms after downward allocation; Task-level consumption may cross that threshold. Descendant allocation follows the existing ancestry in one transaction. Refine/merge supersede source Options; option close defaults to ABANDONED and accepts --reason FULFILLED|SUPERSEDED|ABANDONED.
+
+`task revise TASK_ID --objective TEXT` retains revision history and affects new Changes. All entity IDs accept unique prefixes; multiple matches fail AMBIGUOUS_ID. `scph --help`, `scph help` and group `--help` work without config/database. Invalid command arguments fail before storage access. Watches reject --json.
+
+`config show` reports config_path, disk_config_hash, scheduler_effective_config_hash, scheduler_started_at and restart_required. Scheduler freezes configuration at startup; editing disk does not change active or subsequent activities in that process. Stop and restart to adopt new settings; Changes retain their position. Each CIRun records the actual effective values.
 
 ## Observe a live Attempt
 
@@ -197,14 +203,12 @@ slot, or interrupt a worker. Readonly/none Attempts reject diff; use Artifact fo
 terminal mutation results. Observation failures create no runtime blockers.
 
 Humans judge drift and explicitly interrupt if necessary. Then use comment/discuss,
-refine/propose, allocate and explicit release; watching or funding never releases work.
+refine/propose and change resume/rework as appropriate; watching or funding never grants execution authority.
 
 ## Interrupt, suspend and recover
 
 `attempt interrupt <id>` requests out-of-band termination and waits for the owner
-to capture and settle. `task suspend <id>` also cancels pending work and releases
-the repository. `task resume <id>` observes the current ref while preserving old
-provenance. Task close retires every remaining account balance exactly once.
+to capture and settle, then leaves the Change PAUSED. `task suspend <id>` pauses all nonterminal Changes and releases the repository after settlement. `task resume <id>` observes the ref: unchanged bases may be explicitly resumed; mismatched bases become STALE while history remains intact. Task close retires every remaining account balance exactly once.
 
 Task lifecycle changes, Option release/discuss/close and qualifying `fulfilled` Claims share one
 non-waiting Core control gate per database and Task ID. Contention
@@ -221,7 +225,7 @@ capture, settlement and reconciliation. A live controller causes `BLOCKED`.
 Ctrl+C stops `run` normally. A stale `run.lock` is deliberately not removed by
 `run`; execute `scp recover` after the old process has stopped. Recovery owns the
 same global slot, terminates both WSL distros (or local process groups), captures writable interrupted state, charges
-uncertain leases fully, and reconciles PREPARED Git journals using the actual ref.
+uncertain leases fully, and reconciles PREPARED Git journals using the actual ref. It never performs an unexecuted CAS: an unchanged old ref returns to AWAIT_PROMOTION for explicit authorization.
 It cleans only Core-owned disposable runtime trees/transfers and the stale lock;
 Artifact blobs, Attempt inputs and logs remain audit evidence.
 
@@ -235,7 +239,7 @@ necessary; it never treats an unrecorded effect as successful.
 
 ## Release verification and controller replacement
 
-A normal promotion requires the daily Linux protected test, not Windows release
+A normal promotion requires the daily Linux CI, not Windows release
 acceptance. Keep the previously accepted controller fixed while it develops a
 new `main`. At a release or milestone, stop the scheduler and verify the reviewed,
 committed source on the actual Windows 11 host with both real WSL2 distros:
@@ -257,20 +261,11 @@ pass the remaining failures. Unsupported release hosts fail rather than skip or
 substitute mocks. Daily Linux evidence is recorded separately and must not be
 inferred from the Windows release result.
 
-### Enabling discussion in an existing deployment
+### Development isolation
 
-Upgrade configuration to six operation profiles using scp.example.json; add the
-minimal discussion card and the O5 option.release/option.discuss capabilities.
-Existing funded Options without Pending remain safely idle; do not release them
-as part of migration. Existing valid Pending chains may recover and finish.
+v0.2 uses a new database schema (2). Do not point it at a v0.1 production database or replace the installed controller during this remediation. Create an independent config, database and Artifact/runtime directory. Example config contains all six agent operations plus the separate ci command/time bounds. Go 1.26+ must be preinstalled in both execution environments; setup is a provisioning step, never an Attempt operation. Provision a new worker toolchain with `setup-worker-wsl.ps1 -Distro SCP-Worker -GoArchive <official-linux-amd64.tar.gz> -GoArchiveSHA256 <published-hash>`; an existing toolchain is never overwritten.
 
-With the normal scheduler stopped, run scripts/enable-codex-discussion.py as root
-inside SCP-Worker (pipe its bytes to `wsl -d SCP-Worker -u root --exec python3 -`).
-It adds the discussion operation, binding and prompt to /opt/scp-workers/codex-v0
-without changing credentials or runtime isolation. Use the installed
-/opt/scp-workers/codex-worker executable for the discussion profile. The release
-acceptance script requires the real authenticated bundle and runs its model tests;
-there is no skip/fake fallback for those cases.
+The release suite uses the authenticated opaque Codex worker already provisioned in SCP-Worker. It does not alter the installed scph executable or production database. Release fixture commands and disposable repositories/configurations are separate from production work.
 
 Release source admission rejects tracked edits and non-ignored untracked files.
 WSL package tests run sequentially (-p=1) because both distros are shared execution

@@ -14,7 +14,6 @@ import (
 	"scp-harness/internal/artifact"
 	"scp-harness/internal/boundedexec"
 	"scp-harness/internal/core"
-	"scp-harness/internal/ledger"
 	"scp-harness/internal/model"
 	"scp-harness/internal/worker"
 	"scp-harness/internal/wsl"
@@ -28,6 +27,29 @@ type Scheduler struct {
 
 func New(c *core.Core) *Scheduler { return &Scheduler{Core: c, Owner: model.ID()} }
 func (s *Scheduler) Run(ctx context.Context) (string, error) {
+	// Freeze a deep copy, including role cards, for this scheduler lifetime.
+	data, _ := json.Marshal(s.Core.Config)
+	cards := s.Core.Config.Cards
+	frozen := *s.Core.Config
+	frozen.RoleCards = nil
+	frozen.Operations = nil
+	frozen.Workers = nil
+	frozen.Test.Command = nil
+	_ = json.Unmarshal(data, &frozen)
+	frozen.Cards = nil
+	cardData, _ := json.Marshal(cards)
+	_ = json.Unmarshal(cardData, &frozen.Cards)
+	originalCore := s.Core
+	defer func() { s.Core = originalCore }()
+	local := *s.Core
+	local.Config = &frozen
+	frozenGit := *local.Git
+	frozenGit.Config = &frozen
+	local.Git = &frozenGit
+	local.Runner.Config = &frozen
+	local.TestRunner.Config = &frozen
+	s.Core = &local
+
 	lock := filepath.Join(filepath.Dir(s.Core.Config.Database), "run.lock")
 	if e := os.Mkdir(lock, 0700); e != nil {
 		return "", model.Err("BLOCKED", "scheduler lock exists or inaccessible; inspect and run scp recover: %v", e)
@@ -53,6 +75,14 @@ func (s *Scheduler) Run(ctx context.Context) (string, error) {
 	}
 	if state.Slot.State != "IDLE" {
 		return "", model.Err("BLOCKED", "dangling execution slot; run scp recover")
+	}
+	if e = s.Core.Update(func(st *model.State) error {
+		st.SchedulerConfigHash = s.Core.Config.Hash()
+		st.SchedulerDiskHash = s.Core.Config.DiskHash
+		st.SchedulerStarted = model.Now()
+		return nil
+	}); e != nil {
+		return "", e
 	}
 	for {
 		if ctx.Err() != nil {
@@ -97,17 +127,50 @@ func (s *Scheduler) Run(ctx context.Context) (string, error) {
 		}
 	}
 }
-func (s *Scheduler) Step(ctx context.Context) (bool, error) {
+func (s *Scheduler) Step(ctx context.Context) (ran bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, e := s.Core.Next(s.Owner)
 	if e != nil || p == nil {
 		return false, e
 	}
+	defer func() {
+		if ctx.Err() != nil && p.ChangeID != "" {
+			pe := s.Core.Store.Update(func(st *model.State) error {
+				ch := st.Changes[p.ChangeID]
+				if ch != nil && !ch.Terminal() && ch.State != "STALE" {
+					ch.Set(ch.Stage, "PAUSED", "")
+				}
+				return nil
+			})
+			if err == nil {
+				err = pe
+			}
+		}
+		re := s.Core.Release(s.Owner)
+		if err == nil {
+			err = re
+		}
+	}()
 	slog.Info("execution step", "task", p.TaskID, "operation", p.Operation, "target", p.TargetID)
+	if p.ChangeID != "" && p.Operation != "ci" {
+		st, re := s.Core.Read()
+		if re != nil {
+			return true, re
+		}
+		t := st.Tasks[p.TaskID]
+		sha, re := s.Core.Git.Resolve(ctx, t.RepoPath, t.RepoRef)
+		if re != nil {
+			_ = s.Core.Block(model.Code(re), p.TaskID, "", "", re.Error())
+			return true, re
+		}
+		if sha != st.Changes[p.ChangeID].BaseSHA {
+			return true, s.Core.EndPromotion(*p, sha, "BASE_CHANGED")
+		}
+	}
 	switch p.Operation {
-	case "protected_test":
-		e = s.test(ctx, *p)
+	case "ci":
+		e = s.runCI(ctx, *p)
 	case "promotion":
 		e = s.promote(ctx, *p)
 	default:
@@ -117,7 +180,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 		code := model.Code(e)
 		if code == "WORKER_UNAVAILABLE" || code == "RUNNER_UNAVAILABLE" || code == "REPOSITORY_UNAVAILABLE" || code == "STORAGE_FAILURE" || code == "CORE_INCONSISTENT" {
 			profile, runner := "", ""
-			if p.Operation == "protected_test" {
+			if p.Operation == "ci" {
 				runner = s.Core.Config.WSL.TestDistro
 			} else if p.Operation != "promotion" {
 				profile = s.Core.Config.Profile(p.Operation).ID
@@ -206,7 +269,7 @@ func (s *Scheduler) capture(a *model.Attempt, p model.Step, dir string) (*model.
 		base = source.BaseSHA
 		anchor = source.Anchor
 	}
-	value := model.Artifact{ID: model.ID(), TaskID: a.TaskID, Anchor: anchor, AttemptID: a.ID, BaseSHA: base, Created: model.Now()}
+	value := model.Artifact{ChangeID: a.ChangeID, ID: model.ID(), TaskID: a.TaskID, Anchor: anchor, AttemptID: a.ID, BaseSHA: base, Created: model.Now()}
 	value, e = artifact.Publish(c.Config.Artifacts, value, f.Name(), c.Config.Limits)
 	if e != nil {
 		return nil, e
@@ -228,7 +291,15 @@ func (s *Scheduler) monitor(parent context.Context, task, id string) (context.Co
 				return
 			case <-ticker.C:
 				state, e := s.Core.Read()
-				if e != nil || state.Cancellations[task] || id != "" && state.Interrupts[id] || state.FailStop() {
+				paused := false
+				if e == nil {
+					if p := state.Pending[task]; p != nil {
+						if ch := state.Changes[p.ChangeID]; ch != nil {
+							paused = ch.State == "PAUSED" || ch.State == "ABORTED"
+						}
+					}
+				}
+				if e != nil || paused || state.Cancellations[task] || id != "" && state.Interrupts[id] || state.FailStop() {
 					cancel()
 					return
 				}
@@ -244,7 +315,10 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 		return e
 	}
 	task := current.Tasks[p.TaskID]
-	sha, e := c.Git.Resolve(ctx, task.RepoPath, task.RepoRef)
+	sha := task.SHA
+	if p.ChangeID == "" {
+		sha, e = c.Git.Resolve(ctx, task.RepoPath, task.RepoRef)
+	}
 	if e != nil {
 		return e
 	}
@@ -390,13 +464,13 @@ func (s *Scheduler) attempt(ctx context.Context, p model.Step) error {
 	}
 	return e
 }
-func (s *Scheduler) test(ctx context.Context, p model.Step) error {
+func (s *Scheduler) runCI(ctx context.Context, p model.Step) error {
 	c := s.Core
-	id := model.ID()
-	lease, e := c.TestLease(p, id)
+	run, e := c.PrepareCI(p, s.Owner)
 	if e != nil {
 		return e
 	}
+	id, lease := run.ID, run.Lease
 	start := time.Now()
 	monitor, stop := s.monitor(ctx, p.TaskID, "")
 	defer stop()
@@ -408,6 +482,16 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 	}
 	a := state.Artifacts[p.TargetID]
 	dir, e := s.temp(id)
+	var stdoutFile, stderrFile *os.File
+	if e == nil {
+		stdoutFile, stderrFile, e = worker.OpenLogs(run.Stdout, run.Stderr)
+	}
+	if stdoutFile != nil {
+		defer stdoutFile.Close()
+	}
+	if stderrFile != nil {
+		defer stderrFile.Close()
+	}
 	if e == nil {
 		e = c.TestRunner.Check(active)
 	}
@@ -429,15 +513,21 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 	r := boundedexec.Result{ExitCode: -1}
 	if e == nil {
 		var available bool
-		available, e = c.TestRunner.Executable(active, c.Config.Test.Command[0], c.TestRunner.Root()+"/workspace")
+		available, e = c.TestRunner.Executable(active, run.Command[0], c.TestRunner.Root()+"/workspace")
 		if e == nil && !available {
 			e = model.Err("RUNNER_UNAVAILABLE", "protected test executable unavailable")
 		}
 	}
 	if e == nil {
-		args := append([]string{"sh", "-c", `cd "$1" && shift && exec "$@"`, "scp-test", c.TestRunner.Root() + "/workspace"}, c.Config.Test.Command...)
+		if e = c.Update(func(st *model.State) error { st.CIRuns[id].Status = "RUNNING"; return nil }); e != nil {
+			return e
+		}
+		args := append([]string{"sh", "-c", `cd "$1" && shift && exec "$@"`, "scp-test", c.TestRunner.Root() + "/workspace"}, run.Command...)
 		remaining := max(1, lease-time.Since(start).Milliseconds())
-		r, e = c.TestRunner.Run(active, "scp", args, nil, nil, time.Duration(remaining)*time.Millisecond, c.Config.Test.Output, c.Config.Test.Output)
+		runner := c.TestRunner
+		runner.Stdout = stdoutFile
+		runner.Stderr = stderrFile
+		r, e = runner.Run(active, "scp", args, nil, nil, time.Duration(remaining)*time.Millisecond, c.Config.Test.Output, c.Config.Test.Output)
 	}
 	term := c.TestRunner.Terminate(context.Background())
 	if term != nil {
@@ -462,46 +552,51 @@ func (s *Scheduler) test(ctx context.Context, p model.Step) error {
 		e = nil
 		outcome = "TIMEOUT"
 	}
-	if e != nil {
-		if e == nil {
-			e = model.Err("RUNNER_UNAVAILABLE", "protected test executable unavailable")
-		}
-		settle := c.Store.Update(func(st *model.State) error {
-			if se := ledger.Settle(st, id, time.Since(start).Milliseconds(), term != nil); se != nil {
-				return se
-			}
-			st.Touch(p.TaskID)
-			return nil
-		})
-		if settle != nil {
-			return settle
-		}
-		if model.Code(e) == "INTERNAL_ERROR" {
-			e = model.Err("RUNNER_UNAVAILABLE", "protected runner: %v", e)
-		}
-		return e
+	if monitor.Err() != nil && active.Err() != context.DeadlineExceeded {
+		outcome = "TERMINATED"
 	}
-	stdout, stderr, e := worker.Logs(filepath.Join(dir, "logs"), r)
 	if e != nil {
-		return e
+		outcome = "TERMINATED"
 	}
-	var exit *int
+	logErr := worker.CloseLogs(stdoutFile, stderrFile)
+	if logErr != nil {
+		e = logErr
+		outcome = "TERMINATED"
+	}
 	if r.Started {
 		code := r.ExitCode
-		exit = &code
+		run.ExitCode = &code
 	}
-	result := model.TestResult{ArtifactID: a.ID, Outcome: outcome, Stdout: stdout, Stderr: stderr, ExitCode: exit, Created: model.Now()}
-	return c.FinishTest(p, id, result, time.Since(start).Milliseconds(), outcome == "TIMEOUT")
+	run.Status = outcome
+	run.Elapsed = time.Since(start).Milliseconds()
+	run.StdoutTruncated = r.StdoutTruncated
+	run.StderrTruncated = r.StderrTruncated
+	if finishErr := c.FinishCI(p, *run, outcome == "TIMEOUT" || term != nil); finishErr != nil {
+		return finishErr
+	}
+	return e
 }
 func (s *Scheduler) promote(ctx context.Context, p model.Step) error {
 	c := s.Core
+	unlock, e := c.LockTaskControl(p.TaskID)
+	if e != nil {
+		return e
+	}
+	defer unlock()
 	state, e := c.Read()
 	if e != nil {
 		return e
 	}
 	a, t := state.Artifacts[p.TargetID], state.Tasks[p.TaskID]
-	if a == nil || state.Tests[a.ID] == nil || state.Tests[a.ID].Outcome != "PASS" || state.Reviews[a.ID] == nil || state.Reviews[a.ID].Verdict != "APPROVE" {
+	if a == nil || p.ChangeID == "" || state.Changes[p.ChangeID].Stage != "PROMOTION" || state.Changes[p.ChangeID].State != "RUNNING" {
 		return model.Err("CORE_INCONSISTENT", "promotion gate conjunction failed")
+	}
+	if !core.PromotionEvidence(state, state.Changes[p.ChangeID]) {
+		return c.Update(func(st *model.State) error {
+			st.Changes[p.ChangeID].Set("REVIEW", "BLOCKED", "CI_OR_REVIEW_CHANGED")
+			st.Audit(p.TaskID, "CHANGE_EVIDENCE_CHANGED", p.ChangeID)
+			return nil
+		})
 	}
 	dir, e := s.temp("promotion-" + model.ID())
 	if e != nil {

@@ -11,10 +11,16 @@ func Add(a, b int64) (int64, error) {
 	}
 	return a + b, nil
 }
+
+const MinRootAfterTransferMS int64 = 1200000
+
 func Move(s *model.State, from, to string, n int64) error {
 	a, b := s.Accounts[from], s.Accounts[to]
 	if a == nil || b == nil || a.TaskID != b.TaskID || from == to || n < 0 {
 		return model.Err("PRECONDITION_FAILED", "invalid resource transfer")
+	}
+	if a.Parent == "" && n > 0 && a.Remaining-n < MinRootAfterTransferMS {
+		return model.Err("INSUFFICIENT_RESOURCE", "Task root transfer must retain %d ms", MinRootAfterTransferMS)
 	}
 	if a.Remaining < n {
 		return model.Err("INSUFFICIENT_RESOURCE", "account %s has %d; requested %d", from, a.Remaining, n)
@@ -138,4 +144,19 @@ func Refresh(s *model.State) error {
 		}
 	}
 	return nil
+}
+
+// Allocate fills a deficit along the existing ancestry, atomically in the caller transaction.
+func Allocate(s *model.State, to string, n int64) error {
+	a := s.Accounts[to]
+	if a == nil || a.Parent == "" {
+		return model.Err("PRECONDITION_FAILED", "allocation target must be an Option")
+	}
+	p := s.Accounts[a.Parent]
+	if p.Remaining < n && p.Parent != "" {
+		if e := Allocate(s, a.Parent, n-p.Remaining); e != nil {
+			return e
+		}
+	}
+	return Move(s, a.Parent, to, n)
 }

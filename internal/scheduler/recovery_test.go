@@ -117,6 +117,7 @@ func TestPromotionJournalActualProcessCrashAndRecovery(t *testing.T) {
 			c := engine.Core
 			step(t, engine)
 			step(t, engine)
+			authorizePromotion(t, c, task.ID)
 			if e := c.Release(engine.Owner); e != nil {
 				t.Fatal(e)
 			}
@@ -154,6 +155,10 @@ func TestPromotionJournalActualProcessCrashAndRecovery(t *testing.T) {
 				if s.Journals[j.ID].State != "CONFLICT" || len(s.Blockers) != 0 {
 					t.Fatal("recovery conflict misclassified")
 				}
+			} else if phase == "before_cas" {
+				if s.Journals[j.ID].State != "NOT_APPLIED" || fixtureGit(t, task.RepoPath, "rev-parse", task.RepoRef) != j.OldSHA || changeFor(s, task.ID).Stage != "AWAIT_PROMOTION" {
+					t.Fatal("recovery promoted without renewed authority")
+				}
 			} else {
 				if s.Journals[j.ID].State != "APPLIED" || s.Tasks[task.ID].SHA != j.NewSHA {
 					t.Fatal("recovery did not reconcile applied ref")
@@ -172,7 +177,7 @@ func TestPromotionJournalActualProcessCrashAndRecovery(t *testing.T) {
 }
 func testCoreCrashRecovery(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
-	task, e := c.CreateTask(context.Background(), "crash recovery", repo, "refs/heads/main", c.Operator().ID, 300000)
+	task, e := c.CreateTask(context.Background(), "crash recovery", repo, "refs/heads/main", c.Operator().ID, 1500000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -222,7 +227,7 @@ func testCoreCrashRecovery(t *testing.T) {
 	}
 	s := state(t, c)
 	a := s.Attempts[attempt.ID]
-	if len(report.Attempts) != 1 || a.Status != "CRASHED" || a.ArtifactID == nil || s.Accounts[o.ID].Remaining != 120000-a.Lease || s.Options[o.ID].Status != "OPEN" || s.Pending[task.ID] != nil {
+	if len(report.Attempts) != 1 || a.Status != "CRASHED" || a.ArtifactID == nil || s.Accounts[o.ID].Remaining != 120000-a.Lease || s.Options[o.ID].Status != "OPEN" || nextChangeStep(s, task.ID) != nil {
 		t.Fatalf("crash recovery state: %+v", a)
 	}
 	if artifactText(t, s.Artifacts[*a.ArtifactID], "bad.txt") != "interrupted\n" {

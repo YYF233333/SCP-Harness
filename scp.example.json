@@ -29,7 +29,7 @@
     "git_export_max_bytes": 134217728,
     "external_process_timeout_ms": 60000
   },
-  "protected_test": {
+  "ci": {
     "command": [
       "go",
       "test",
@@ -72,7 +72,7 @@
       ],
       "actor_card": "merge",
       "timeout_ms": 60000,
-      "workspace": "none",
+      "workspace": "readonly",
       "synthetic_git": false,
       "unavailable_exit_codes": [
         75

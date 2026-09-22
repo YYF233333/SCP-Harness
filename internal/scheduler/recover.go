@@ -68,7 +68,7 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		if st.SlotPID != 0 && boundedexec.Alive(st.SlotPID) {
 			return model.Err("BLOCKED", "execution/recovery owner still alive")
 		}
-		st.Slot = model.Slot{State: "BUSY"}
+		st.Slot = model.Slot{State: "BUSY", Kind: "recovery"}
 		st.SlotTask = ""
 		st.SlotOwner = s.Owner
 		st.SlotPID = os.Getpid()
@@ -93,7 +93,7 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		profile := c.Config.Profile(a.Operation)
 		p := state.Pending[a.TaskID]
 		if p == nil {
-			p = &model.Step{TaskID: a.TaskID, OptionID: a.AnchorID, Operation: a.Operation, TargetType: a.TargetType, TargetID: a.TargetID}
+			p = &model.Step{ChangeID: a.ChangeID, TaskID: a.TaskID, OptionID: a.AnchorID, Operation: a.Operation, TargetType: a.TargetType, TargetID: a.TargetID}
 		}
 		if profile.Workspace == "writable" {
 			var out bytes.Buffer
@@ -116,6 +116,11 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 			if captured != nil {
 				st.Artifacts[captured.ID] = captured
 				v.ArtifactID = &captured.ID
+				if ch := st.Changes[a.ChangeID]; ch != nil {
+					ch.ArtifactID = captured.ID
+					ch.CIRunID = ""
+					ch.ReviewAttemptID = ""
+				}
 			}
 			if e := ledger.Settle(st, a.ID, 0, true); e != nil {
 				return e
@@ -127,6 +132,16 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 			v.Reason = &reason
 			delete(st.Interrupts, a.ID)
 			delete(st.Pending, a.TaskID)
+			if ch := st.Changes[a.ChangeID]; ch != nil && !ch.Terminal() {
+				ch.Set(ch.Stage, "PAUSED", "CORE_RESTART")
+			}
+			requests := st.Requests[:0]
+			for _, request := range st.Requests {
+				if request.RequestID != p.RequestID {
+					requests = append(requests, request)
+				}
+			}
+			st.Requests = requests
 			if a.Operation == "option_generation" {
 				st.Exploration[a.TaskID].Count++
 			}
@@ -155,7 +170,17 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 			if e := ledger.Settle(st, id, 0, true); e != nil {
 				return e
 			}
+			if r := st.CIRuns[id]; r != nil {
+				r.Status = "TERMINATED"
+				r.Ended = model.Now()
+				r.Elapsed = r.Lease
+			}
 			st.Touch(task)
+		}
+		for _, ch := range st.Changes {
+			if ch.State == "RUNNING" {
+				ch.Set(ch.Stage, "PAUSED", "CORE_RESTART")
+			}
 		}
 		return nil
 	}); e != nil {
@@ -179,16 +204,21 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		if sha == j.NewSHA {
 			outcome = "APPLIED"
 		} else if sha == j.OldSHA {
-			if e = c.Git.CAS(ctx, t.RepoPath, j.Ref, j.OldSHA, j.NewSHA); e == nil {
-				outcome = "APPLIED"
-			} else if model.Code(e) != "PRECONDITION_CHANGED" {
-				return result, e
-			}
+			outcome = "NOT_APPLIED"
 		}
 		if e = c.Store.Update(func(st *model.State) error {
 			st.Journals[j.ID].State = outcome
 			if outcome == "APPLIED" {
 				st.Tasks[j.TaskID].SHA = j.NewSHA
+			}
+			if ch := st.Changes[st.Artifacts[j.ArtifactID].ChangeID]; ch != nil {
+				if outcome == "APPLIED" {
+					ch.Set("PROMOTION", "DONE", "")
+				} else if outcome == "NOT_APPLIED" {
+					ch.Set("AWAIT_PROMOTION", "QUEUED", "")
+				} else {
+					ch.Set(ch.Stage, "STALE", "BASE_CHANGED")
+				}
 			}
 			delete(st.Pending, j.TaskID)
 			st.Audit(j.TaskID, "PROMOTION_RECOVERED", outcome)

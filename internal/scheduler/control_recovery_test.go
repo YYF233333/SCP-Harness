@@ -46,7 +46,7 @@ func r1bProcess(t *testing.T, cmd boundedexec.Command) (context.CancelFunc, func
 // Timing only bounds observation; a sleep duration is never an assertion.
 func testControlExitRecovery(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
-	task, e := c.CreateTask(context.Background(), "R1b control crash", repo, "refs/heads/main", c.Operator().ID, 300000)
+	task, e := c.CreateTask(context.Background(), "R1b control crash", repo, "refs/heads/main", c.Operator().ID, 1500000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -153,7 +153,7 @@ func testControlExitRecovery(t *testing.T) {
 	}
 	s = state(t, c)
 	a := s.Attempts[attemptID]
-	if len(report.Attempts) != 1 || report.Attempts[0] != attemptID || a.Status != "CRASHED" || a.ArtifactID == nil || s.Cancellations[task.ID] || !store.TaskQuiescent(s, task.ID) || s.Pending[task.ID] != nil || s.Tasks[task.ID].Status != "ACTIVE" || s.Accounts[o.ID].Remaining != 120000-a.Lease {
+	if len(report.Attempts) != 1 || report.Attempts[0] != attemptID || a.Status != "CRASHED" || a.ArtifactID == nil || s.Cancellations[task.ID] || !store.TaskQuiescent(s, task.ID) || nextChangeStep(s, task.ID) != nil || s.Tasks[task.ID].Status != "ACTIVE" || s.Accounts[o.ID].Remaining != 120000-a.Lease {
 		t.Fatal("explicit recovery did not capture/settle and clear cancellation")
 	}
 	if artifactText(t, s.Artifacts[*a.ArtifactID], "bad.txt") != "interrupted\n" {
@@ -170,7 +170,7 @@ func testControlExitRecovery(t *testing.T) {
 	if ran, e := engine.Step(context.Background()); e != nil || ran {
 		t.Fatal("recovery invented release", e)
 	}
-	if _, e = c.ReleaseOption(o.ID); e != nil {
+	if _, e = c.ChangeAction(context.Background(), a.ChangeID, "resume"); e != nil {
 		t.Fatal(e)
 	}
 	step(t, engine)
@@ -183,17 +183,17 @@ func testControlExitRecovery(t *testing.T) {
 func TestR1bProtectedAdmissionChecksCancellation(t *testing.T) {
 	engine, task, _, _ := candidate(t, "fake-reviewer-approve")
 	c := engine.Core
-	pending := *state(t, c).Pending[task.ID]
-	if pending.Operation != "protected_test" {
+	pending := *nextChangeStep(state(t, c), task.ID)
+	if pending.Operation != "ci" {
 		t.Fatal("expected real pending protected test")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, e := c.Lifecycle(ctx, task.ID, "suspend"); model.Code(e) != "PRECONDITION_FAILED" {
-		t.Fatalf("control cancellation: %v", e)
+	if _, e := c.Lifecycle(ctx, task.ID, "suspend"); e != nil {
+		t.Fatalf("settled suspend: %v", e)
 	}
 	before := state(t, c)
-	if _, e := c.TestLease(pending, model.ID()); model.Code(e) != "BLOCKED" {
+	if _, e := c.PrepareCI(pending, "not-owner"); model.Code(e) != "BLOCKED" {
 		t.Fatalf("canceled protected test reserved a lease: %v", e)
 	}
 	if !reflect.DeepEqual(before, state(t, c)) {

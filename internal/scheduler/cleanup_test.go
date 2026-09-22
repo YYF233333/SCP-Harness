@@ -45,7 +45,7 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 				c, repo := integrationCore(t, "success-worker")
 				cleanupLimits(c.Config)
 				limits := c.Config.Limits
-				task, e := c.CreateTask(context.Background(), "excess transient input", repo, "refs/heads/main", c.Operator().ID, 200000)
+				task, e := c.CreateTask(context.Background(), "excess transient input", repo, "refs/heads/main", c.Operator().ID, 1400000)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -86,7 +86,7 @@ func TestR3OversizedWorkspaceCleanupProgress(t *testing.T) {
 				if _, e = c.Lifecycle(context.Background(), task.ID, "suspend"); e != nil {
 					t.Fatal(e)
 				}
-				other, e := c.CreateTask(context.Background(), "normal subsequent task", repo, "refs/heads/main", c.Operator().ID, 120000)
+				other, e := c.CreateTask(context.Background(), "normal subsequent task", repo, "refs/heads/main", c.Operator().ID, 1320000)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -138,7 +138,7 @@ func TestR3ProtectedCopyReallyDiscarded(t *testing.T) {
 				t.Fatalf("protected test reused the worker environment: %v", e)
 			}
 			s := state(t, c)
-			if s.Tests[submitted.ID] == nil || s.Tests[submitted.ID].Outcome != "PASS" || s.Pending[task.ID].Operation != "review" || c.Config.Limits != limits {
+			if s.LatestCI(submitted.ID) == nil || s.LatestCI(submitted.ID).Status != "PASS" || nextChangeStep(s, task.ID).Operation != "review" || c.Config.Limits != limits {
 				t.Fatal("test finalization or configured limits changed")
 			}
 			if s.Artifacts[submitted.ID].SHA256 != submitted.SHA256 || len(s.Artifacts) != 1 {

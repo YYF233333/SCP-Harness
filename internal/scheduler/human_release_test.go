@@ -9,14 +9,13 @@ import (
 	"time"
 
 	"scp-harness/internal/core"
-	"scp-harness/internal/model"
 )
 
 // Uses Run, persisted SQLite, real process execution and the production runner.
 // Windows release runs this explicitly on SCP-Worker and SCP-Test.
 func TestHumanOptionReleaseIntegration(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
-	task, e := c.CreateTask(context.Background(), "human release", repo, "refs/heads/main", c.Operator().ID, 7200000)
+	task, e := c.CreateTask(context.Background(), "human release", repo, "refs/heads/main", c.Operator().ID, 8400000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -84,26 +83,31 @@ func TestHumanOptionReleaseIntegration(t *testing.T) {
 		if _, e = c.ReleaseOption(id); e != nil {
 			t.Fatal(e)
 		}
-		if _, e = c.DiscussOption(id, "cannot insert into chain"); e == nil {
-			t.Fatal("discussion entered mutation chain")
+		if _, e = c.DiscussOption(id, "queued alongside Change"); e != nil {
+			t.Fatal(e)
 		}
-		for i := 0; i < 4; i++ {
-			claims := len(state(t, c).Claims)
-			if _, e = c.DiscussOption(id, "blocked at every chain stage"); model.Code(e) != "BLOCKED" || len(state(t, c).Claims) != claims {
-				t.Fatal("discussion enqueue was not atomic during chain", e)
-			}
+		step(t, engine) // explicit discussion gets the next execution boundary
+		for i := 0; i < 3; i++ {
 			step(t, engine)
 		}
 		s = state(t, c)
-		if s.Pending[task.ID] != nil || s.Options[id].Status != "OPEN" || s.Options[id].Remaining <= 0 || s.Tasks[task.ID].SHA == task.SHA {
-			t.Fatal("promotion did not end released chain")
+		ch := changeFor(s, task.ID)
+		if ch.Stage != "AWAIT_PROMOTION" || fixtureGit(t, repo, "rev-parse", "HEAD") != ch.BaseSHA {
+			t.Fatal("release granted promotion authority")
+		}
+		authorizePromotion(t, c, task.ID)
+		step(t, engine)
+		s = state(t, c)
+		if ch = changeFor(s, task.ID); ch.State != "DONE" || s.Options[id].Status != "OPEN" || s.Options[id].Remaining <= 0 {
+			t.Fatal("explicit promotion failed")
 		}
 		count := len(s.Attempts)
 		assertIdleRun(t, engine)
 		if len(state(t, c).Attempts) != count {
-			t.Fatal("H4: second cycle auto-started")
+			t.Fatal("second cycle auto-started")
 		}
 	}
+
 	t.Log("H3/H4 PASS: each explicit release ran one mutation/test/review/promotion chain; no automatic second cycle")
 }
 

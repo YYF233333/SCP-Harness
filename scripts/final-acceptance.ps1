@@ -35,6 +35,7 @@ try {
     $env:SCP_ACCEPTANCE_EXE = $acceptanceExe
     $env:SCP_CODEX_EVIDENCE = Join-Path $evidence 'codex'
     $cases = [ordered]@{
+        V2 = @('TestV2PromotionAuthorityRestartAndStandaloneCI', 'TestV2InterruptResumeControlQueueAndStaleChange', 'TestV2CIEvidenceAndRepeatedTimeout', 'TestV2SuspendResumeBaselineAndConfigProvenance', 'TestV2SchedulerFreezesConfigUntilRestart', 'TestV2TransferFloorOnlyRestrictsTransfers', 'TestV2ObjectiveAndSupersededHistory', 'TestV2CapabilityAndInvalidLifecycle', 'TestV2HelpAndValidationBeforeStorage', 'TestV2ShortIDsAndConfigShow', 'TestV2RefineRunningChangeDoesNotBlockControlPlane')
         CLI = @('TestAcceptanceExecutable')
         Control = @('TestR1bCrossProcessControlAndSettlement', 'TestR1bTaskControlIdentityAndEntrypoints')
         Recovery = @('TestR1bControlExitRequiresExplicitRecovery', 'TestActualCoreCrashCapturesWorkerAndChargesFullLease')

@@ -14,7 +14,7 @@ import (
 
 func testRunningSchedulerControl(t *testing.T) {
 	c, repo := integrationCore(t, "success-worker")
-	task, e := c.CreateTask(context.Background(), "control plane", repo, "refs/heads/main", c.Operator().ID, 120000)
+	task, e := c.CreateTask(context.Background(), "control plane", repo, "refs/heads/main", c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -70,7 +70,7 @@ func testRunningSchedulerControl(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := state(t, c)
-	if s.Attempts[id].Status != "INTERRUPTED" || s.Attempts[id].ArtifactID == nil || s.Tasks[task.ID].Status != "SUSPENDED" || s.Pending[task.ID] != nil || s.Tasks[task.ID].Resources.Outstanding != 0 {
+	if s.Attempts[id].Status != "INTERRUPTED" || s.Attempts[id].ArtifactID == nil || s.Tasks[task.ID].Status != "SUSPENDED" || nextChangeStep(s, task.ID) != nil || s.Tasks[task.ID].Resources.Outstanding != 0 {
 		t.Fatal("suspend did not settle and preserve interrupted work")
 	}
 	cancel()

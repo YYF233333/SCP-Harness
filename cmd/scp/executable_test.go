@@ -101,13 +101,13 @@ func testAcceptanceExecutable(t *testing.T) {
 	}
 	git("add", "README.md")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@local", "commit", "-m", "base")
-	task := call("task", "create", "--objective", "binary acceptance", "--repo", repo, "--ref", "refs/heads/main", "--responsible-actor", cfg.Operator, "--wall-ms", "10000")
+	task := call("task", "create", "--objective", "binary acceptance", "--repo", repo, "--ref", "refs/heads/main", "--responsible-actor", cfg.Operator, "--wall-ms", "1210000")
 	id := task["id"].(string)
 	option := call("option", "propose", "--task", id, "--text", "route")
 	call("option", "allocate", option["id"].(string), "--wall-ms", "1000")
-	before := call("task", "show", id)["resources"]
+	before := call("task", "show", id)["task"].(map[string]any)["resources"]
 	call("claim", "create", "--task", id, "--subject-type", "TASK", "--subject-id", id, "--type", "resource.propose")
-	after := call("task", "show", id)["resources"]
+	after := call("task", "show", id)["task"].(map[string]any)["resources"]
 	left, _ := json.Marshal(before)
 	right, _ := json.Marshal(after)
 	if !bytes.Equal(left, right) {
@@ -115,7 +115,7 @@ func testAcceptanceExecutable(t *testing.T) {
 	}
 	closed := call("task", "close", id)
 	resources := closed["resources"].(map[string]any)
-	if closed["status"] != "CLOSED" || resources["remaining_wall_ms"] != float64(0) || resources["retired_wall_ms"] != float64(10000) {
+	if closed["status"] != "CLOSED" || resources["remaining_wall_ms"] != float64(0) || resources["retired_wall_ms"] != float64(1210000) {
 		t.Fatal("actual executable close ledger")
 	}
 	status := call("status")

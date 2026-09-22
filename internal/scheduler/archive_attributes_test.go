@@ -19,12 +19,14 @@ func TestR4UnavailableSnapshotHasNoCandidateEffects(t *testing.T) {
 	}
 	fixtureGit(t, repo, "add", ".gitattributes")
 	fixtureGit(t, repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@local", "commit", "-m", "unsupported archive feature")
-	task, e := c.CreateTask(context.Background(), "unsupported snapshot", repo, "refs/heads/main", c.Operator().ID, 120000)
+	task, e := c.CreateTask(context.Background(), "unsupported snapshot", repo, "refs/heads/main", c.Operator().ID, 1320000)
 	if e != nil {
 		t.Fatal(e)
 	}
 	engine := New(c)
-	step(t, engine)
+	if e = c.Store.Update(func(s *model.State) error { s.Exploration[task.ID].Done = true; return nil }); e != nil {
+		t.Fatal(e)
+	}
 	option, e := c.Propose(task.ID, "route", "")
 	if e != nil {
 		t.Fatal(e)
@@ -38,6 +40,9 @@ func TestR4UnavailableSnapshotHasNoCandidateEffects(t *testing.T) {
 	pending, e := c.Next(engine.Owner)
 	if e != nil || pending == nil {
 		t.Fatalf("pending mutation: %v", e)
+	}
+	if e = c.Release(engine.Owner); e != nil {
+		t.Fatal(e)
 	}
 	c.Git.Calls = map[string]int{}
 	_, e = engine.Step(context.Background())
@@ -54,7 +59,7 @@ func TestR4UnavailableSnapshotHasNoCandidateEffects(t *testing.T) {
 	if attempt == nil || attempt.Status != "TERMINATED" || attempt.Reason == nil || *attempt.Reason != "REPOSITORY_UNAVAILABLE" || attempt.ExitCode != nil {
 		t.Fatalf("snapshot rejection changed by later capture: %+v", attempt)
 	}
-	if !reflect.DeepEqual(s.Pending[task.ID], pending) || len(s.Artifacts) != 0 || len(s.Journals) != 0 || len(s.Reviews) != 0 || s.Tasks[task.ID].SHA != task.SHA || s.Options[option.ID].Status != "OPEN" {
+	if !reflect.DeepEqual(nextChangeStep(s, task.ID), pending) || len(s.Artifacts) != 0 || len(s.Journals) != 0 || len(s.Reviews) != 0 || s.Tasks[task.ID].SHA != task.SHA || s.Options[option.ID].Status != "OPEN" {
 		t.Fatal("unsupported snapshot produced candidate/semantic effects")
 	}
 	if c.Git.Calls["export_attr_inspection"] != 1 || c.Git.Calls["export_tree"] != 0 || c.Git.Calls["synthetic_git"] != 0 {

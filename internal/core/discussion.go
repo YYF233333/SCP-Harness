@@ -22,22 +22,6 @@ type DiscussionRequest struct {
 	Queued  bool         `json:"queued"`
 }
 
-func optionInPending(s *model.State, o *model.Option) bool {
-	p := s.Pending[o.TaskID]
-	if p == nil {
-		return false
-	}
-	if p.OptionID == o.ID || p.TargetType == "OPTION" && p.TargetID == o.ID {
-		return true
-	}
-	for _, id := range p.Participants {
-		if id == o.ID {
-			return true
-		}
-	}
-	return false
-}
-
 // The SQLite transaction is acquired before the nonblocking Task gate. A busy
 // control returns immediately; the gate is never held waiting for SQLite.
 func (c *Core) enqueueOption(id string, fn func(*model.State, *model.Option) error) error {
@@ -56,8 +40,8 @@ func (c *Core) enqueueOption(id string, fn func(*model.State, *model.Option) err
 		if e != nil {
 			return e
 		}
-		if s.Cancellations[o.TaskID] || s.Pending[o.TaskID] != nil {
-			return model.Err("BLOCKED", "Task has a pending chain or cancellation")
+		if s.Cancellations[o.TaskID] {
+			return model.Err("BLOCKED", "Task cancellation in progress")
 		}
 		if !s.Exploration[o.TaskID].Done {
 			return model.Err("INVALID_STATE", "initial exploration is not complete")
@@ -68,11 +52,11 @@ func (c *Core) enqueueOption(id string, fn func(*model.State, *model.Option) err
 
 // ReleaseOption is the sole host entry that seeds a new Option mutation chain.
 // Funding and informational Claims never call this method.
-func (c *Core) ReleaseOption(id string) (*model.Option, error) {
+func (c *Core) ReleaseOption(id string) (*model.Change, error) {
 	if e := c.Operator().Require("option.release"); e != nil {
 		return nil, e
 	}
-	var result *model.Option
+	var result *model.Change
 	e := c.enqueueOption(id, func(s *model.State, o *model.Option) error {
 		if e := c.Operator().Require("option.release"); e != nil {
 			return e
@@ -80,10 +64,17 @@ func (c *Core) ReleaseOption(id string) (*model.Option, error) {
 		if s.Accounts[id].Remaining <= 0 {
 			return model.Err("INSUFFICIENT_RESOURCE", "Option has no remaining resource")
 		}
-		s.Pending[o.TaskID] = &model.Step{TaskID: o.TaskID, OptionID: id, Operation: "mutation", TargetType: "OPTION", TargetID: id}
+		for _, ch := range s.Changes {
+			if ch.OptionID == id && !ch.Terminal() {
+				return model.Err("INVALID_STATE", "Option already has a nonterminal Change")
+			}
+		}
+		t := s.Tasks[o.TaskID]
+		now := model.Now()
+		result = &model.Change{ID: model.ID(), TaskID: o.TaskID, OptionID: id, BaseSHA: t.SHA, Objective: t.Objective, ObjectiveRevision: t.ObjectiveRevision, Stage: "MUTATION", State: "QUEUED", Created: now, Updated: now}
+		s.Changes[result.ID] = result
 		s.Audit(o.TaskID, "OPTION_RELEASED", id)
 		s.Touch(o.TaskID)
-		result = o
 		return nil
 	})
 	return result, e
@@ -138,7 +129,7 @@ func (c *Core) DiscussOption(id, text string) (*DiscussionRequest, error) {
 		if e != nil {
 			return e
 		}
-		s.Pending[t.ID] = &model.Step{TaskID: t.ID, OptionID: id, Operation: "discussion", TargetType: "OPTION", TargetID: id}
+		s.Requests = append(s.Requests, &model.Step{RequestID: model.ID(), TaskID: t.ID, OptionID: id, Operation: "discussion", TargetType: "OPTION", TargetID: id})
 		s.Audit(t.ID, "OPTION_DISCUSSION_REQUESTED", id)
 		s.Touch(t.ID)
 		result = &DiscussionRequest{Comment: claim, Queued: true}

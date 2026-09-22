@@ -32,7 +32,7 @@ func (r Runner) Run(ctx context.Context, user string, args []string, in io.Reade
 	if r.Stdout != nil {
 		out = r.Stdout
 	}
-	return boundedexec.Run(ctx, boundedexec.Command{Argv: r.Args(user, args...), Stdin: in, StdoutSink: out, StderrSink: r.Stderr, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
+	return boundedexec.Run(ctx, boundedexec.Command{Argv: r.Args(user, args...), Stdin: in, StdoutSink: out, StderrSink: r.Stderr, Env: cleanEnvironment(), ReplaceEnv: true, Timeout: timeout, MaxStdout: maxout, MaxStderr: maxerr})
 }
 
 func (r Runner) Check(ctx context.Context) error {

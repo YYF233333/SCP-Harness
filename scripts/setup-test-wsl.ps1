@@ -6,7 +6,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $env:WSL_UTF8 = '1'
-if (Get-Process -Name scp -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before provisioning SCP-Test.' }
+if (Get-Process -Name scp,scph -ErrorAction SilentlyContinue) { throw 'Stop the normal SCP scheduler before provisioning SCP-Test.' }
 $listing = (wsl --list --verbose | Out-String) -replace "`0", ''
 if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate WSL distros.' }
 if ($listing -notmatch 'SCP-Test\s+\S+\s+2') {
@@ -18,7 +18,6 @@ if ($listing -notmatch 'SCP-Test\s+\S+\s+2') {
     wsl --import SCP-Test $installPath $Rootfs --version 2
     if ($LASTEXITCODE -ne 0) { throw 'SCP-Test import failed' }
 }
-& (Join-Path $PSScriptRoot 'setup-worker-wsl.ps1')
 Write-Output 'Checking SCP-Test prerequisites...'
 wsl -d SCP-Test -u root --cd / --exec sh -c 'command -v git >/dev/null && command -v python3 >/dev/null && command -v tar >/dev/null && test -s /etc/ssl/certs/ca-certificates.crt'
 if ($LASTEXITCODE -ne 0) {
@@ -39,6 +38,7 @@ with pathlib.Path(sys.argv[1]).open('rb') as archive:
     python -c $installGo $GoArchive
     if ($LASTEXITCODE -ne 0) { throw 'Go installation failed; existing toolchains are not overwritten.' }
 }
+& (Join-Path $PSScriptRoot 'setup-worker-wsl.ps1') -Distro SCP-Test
 $goVersion = wsl -d SCP-Test -u scp --cd / --exec go version
 if ($LASTEXITCODE -ne 0 -or $goVersion -notmatch 'go(\d+)\.(\d+)' -or ([int]$Matches[1] -eq 1 -and [int]$Matches[2] -lt 26)) { throw 'SCP-Test needs Go 1.26+; supply a verified official Linux amd64 Go archive on first setup.' }
 Write-Output $goVersion

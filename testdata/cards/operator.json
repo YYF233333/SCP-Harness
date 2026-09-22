@@ -9,7 +9,7 @@
     "claim.related",
     "artifact.metadata",
     "artifact.content",
-    "test.result",
+    "ci.result",
     "review.findings",
     "ledger.resource"
   ],

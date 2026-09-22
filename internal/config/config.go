@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -72,8 +73,8 @@ func (c Card) Require(names ...string) error {
 	return nil
 }
 
-var Channels = []string{"task.objective", "task.state", "option.target", "option.lineage.direct", "claim.related", "artifact.metadata", "artifact.content", "test.result", "review.findings", "ledger.resource", "repository.snapshot"}
-var Capabilities = []string{"task.create", "task.extend", "task.suspend", "task.resume", "task.complete", "option.propose", "option.refine", "option.split", "option.merge", "option.allocate", "option.release", "option.discuss", "option.complete", "claim.publish", "resource.propose", "review.decide", "attempt.interrupt", "artifact.export", "repository.read", "sandbox.write", "process.execute"}
+var Channels = []string{"task.objective", "task.state", "option.target", "option.lineage.direct", "claim.related", "artifact.metadata", "artifact.content", "ci.result", "review.findings", "ledger.resource", "repository.snapshot"}
+var Capabilities = []string{"task.revise", "change.promote", "change.pause", "change.resume", "change.abort", "change.retry-ci", "change.retry-review", "change.rework", "ci.run", "task.create", "task.extend", "task.suspend", "task.resume", "task.complete", "option.propose", "option.refine", "option.split", "option.merge", "option.allocate", "option.release", "option.discuss", "option.complete", "claim.publish", "resource.propose", "review.decide", "attempt.interrupt", "artifact.export", "repository.read", "sandbox.write", "process.execute"}
 
 func member(list []string, s string) bool {
 	for _, v := range list {
@@ -175,6 +176,8 @@ type Profile struct {
 	Unavailable []int    `json:"unavailable_exit_codes"`
 }
 type Config struct {
+	Path      string            `json:"-"`
+	DiskHash  string            `json:"-"`
 	Version   int               `json:"schema_version"`
 	Database  string            `json:"database"`
 	Artifacts string            `json:"artifact_store"`
@@ -193,7 +196,7 @@ type Config struct {
 		Command []string `json:"command"`
 		Timeout int64    `json:"timeout_ms"`
 		Output  int64    `json:"output_limit_bytes"`
-	} `json:"protected_test"`
+	} `json:"ci"`
 	Workers    []Profile         `json:"workers"`
 	Operations map[string]string `json:"operation_profiles"`
 	Cards      map[string]Card   `json:"-"`
@@ -220,6 +223,8 @@ func Load(path string) (*Config, error) {
 	if !command(c.Test.Command) {
 		return fail("protected test command is empty")
 	}
+	c.Path, _ = filepath.Abs(path)
+	c.DiskHash = fmt.Sprintf("%x", sha256.Sum256(data))
 	dir, e := filepath.Abs(filepath.Dir(path))
 	if e != nil {
 		return fail(e.Error())
@@ -270,13 +275,13 @@ func Load(path string) (*Config, error) {
 		}
 		profiles[p.ID] = p
 	}
-	modes := map[string]string{"mutation": "writable", "review": "readonly", "option_generation": "none", "merge_judge": "none", "merge_synth": "none", "discussion": "readonly"}
+	modes := map[string]string{"mutation": "writable", "review": "readonly", "option_generation": "readonly", "merge_judge": "none", "merge_synth": "none", "discussion": "readonly"}
 	if len(c.Operations) != len(modes) {
 		return fail("exactly six operation profiles required")
 	}
 	for op, mode := range modes {
 		p, ok := profiles[c.Operations[op]]
-		if !ok || p.Workspace != mode || op == "discussion" && p.Synthetic {
+		if !ok || (p.Workspace != mode && !((op == "merge_judge" || op == "merge_synth") && p.Workspace == "readonly")) || op == "discussion" && p.Synthetic {
 			return fail("invalid operation profile: " + op)
 		}
 	}
@@ -290,4 +295,10 @@ func (c *Config) Profile(operation string) Profile {
 		}
 	}
 	panic("validated operation profile missing")
+}
+
+func (c *Config) Hash() string {
+	b, _ := json.Marshal(c)
+	cards, _ := json.Marshal(c.Cards)
+	return fmt.Sprintf("%x", sha256.Sum256(append(b, cards...)))
 }

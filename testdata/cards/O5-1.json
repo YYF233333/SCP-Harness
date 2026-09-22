@@ -9,7 +9,7 @@
     "claim.related",
     "artifact.metadata",
     "artifact.content",
-    "test.result",
+    "ci.result",
     "review.findings",
     "ledger.resource"
   ],
@@ -79,6 +79,33 @@
     {
       "name": "process.execute",
       "scope": "lease.sandbox"
+    },
+    {
+      "name": "task.revise"
+    },
+    {
+      "name": "change.promote"
+    },
+    {
+      "name": "change.pause"
+    },
+    {
+      "name": "change.resume"
+    },
+    {
+      "name": "change.abort"
+    },
+    {
+      "name": "change.retry-ci"
+    },
+    {
+      "name": "change.retry-review"
+    },
+    {
+      "name": "change.rework"
+    },
+    {
+      "name": "ci.run"
     }
   ],
   "limits": {

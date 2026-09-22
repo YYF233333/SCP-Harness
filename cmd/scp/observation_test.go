@@ -96,7 +96,7 @@ func observationFixture(t *testing.T, script string) (*core.Core, string, string
 	}
 	git("add", ".")
 	git("-c", "user.name=fixture", "-c", "user.email=fixture@local", "commit", "-m", "base")
-	task, e := c.CreateTask(context.Background(), "observation", repo, "refs/heads/main", c.Operator().ID, 180000)
+	task, e := c.CreateTask(context.Background(), "observation", repo, "refs/heads/main", c.Operator().ID, 1380000)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -461,7 +461,15 @@ func TestObservationReadonlyRejection(t *testing.T) {
 		// Terminal records allow all readonly operation types without fabricating
 		// a runnable chain or creating any temporary workspace.
 		e := c.Store.Update(func(s *model.State) error {
-			s.Attempts[id] = &model.Attempt{ID: id, TaskID: task, Operation: operation, Status: "RETURNED", TargetType: "TASK", TargetID: task, Profile: c.Config.Profile(operation).ID, Actor: c.Config.Profile(operation).Card, AnchorType: "TASK", AnchorID: task, SHA: s.Tasks[task].SHA, Started: model.Now()}
+			changeID := ""
+			if operation == "review" {
+				for _, ch := range s.Changes {
+					if ch.TaskID == task {
+						changeID = ch.ID
+					}
+				}
+			}
+			s.Attempts[id] = &model.Attempt{ChangeID: changeID, ID: id, TaskID: task, Operation: operation, Status: "RETURNED", TargetType: "TASK", TargetID: task, Profile: c.Config.Profile(operation).ID, Actor: c.Config.Profile(operation).Card, AnchorType: "TASK", AnchorID: task, SHA: s.Tasks[task].SHA, Started: model.Now()}
 			return nil
 		})
 		if e != nil {

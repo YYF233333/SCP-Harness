@@ -51,13 +51,17 @@ func TestReleaseOnlySeedsOneChain(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		codes[model.Code(<-errs)]++
 	}
-	if codes["BLOCKED"] != 1 {
+	if codes["INVALID_STATE"] != 1 {
 		t.Fatal("duplicate release not rejected", codes)
 	}
 	s := readState(t, c)
-	want := &model.Step{TaskID: taskID, OptionID: id, Operation: "mutation", TargetType: "OPTION", TargetID: id}
-	if len(s.Pending) != 1 || !reflect.DeepEqual(s.Pending[taskID], want) || len(s.Attempts) != 0 || s.Slot.State != "IDLE" {
-		t.Fatal("release projection/side effect")
+	if len(s.Changes) != 1 || len(s.Pending) != 0 || len(s.Attempts) != 0 || s.Slot.State != "IDLE" {
+		t.Fatal("release side effect")
+	}
+	for _, ch := range s.Changes {
+		if ch.TaskID != taskID || ch.OptionID != id || ch.Stage != "MUTATION" || ch.State != "QUEUED" {
+			t.Fatal("release projection")
+		}
 	}
 	n := 0
 	for _, event := range s.Events {
@@ -72,7 +76,7 @@ func TestReleaseOnlySeedsOneChain(t *testing.T) {
 
 func TestReleaseAndDiscussPreconditionsAreAtomic(t *testing.T) {
 	for _, operation := range []string{"release", "discuss"} {
-		conditions := []string{"capability", "missing", "closed", "inactive", "exploration", "resource", "pending", "cancellation", "gate"}
+		conditions := []string{"capability", "missing", "closed", "inactive", "exploration", "resource", "cancellation", "gate"}
 		if operation == "discuss" {
 			conditions = append(conditions, "publish")
 		}
@@ -147,24 +151,28 @@ func TestReleaseAndDiscussPreconditionsAreAtomic(t *testing.T) {
 }
 
 func TestAllCreationPathsRemainInert(t *testing.T) {
-	c, taskID, id := claimFixture(t, "option.propose", "option.allocate", "option.refine", "option.split", "option.merge", "option.release", "claim.publish", "repository.read", "sandbox.write", "process.execute")
+	c, taskID, id := claimFixture(t, "task.extend", "option.propose", "option.allocate", "option.refine", "option.split", "option.merge", "option.release", "claim.publish", "repository.read", "sandbox.write", "process.execute")
+	if _, e := c.Extend(taskID, 1200000); e != nil {
+		t.Fatal(e)
+	}
 	a, e := c.Propose(taskID, "proposed", "")
 	if e != nil {
 		t.Fatal(e)
 	}
-	r, e := c.Split(id, []Child{{Text: "refined", Wall: 10}}, true)
+	r, e := c.Split(id, []Child{{Text: "refined", Wall: 4000}}, true)
 	if e != nil {
 		t.Fatal(e)
 	}
+	id = r.Children[0].ID
 	split, e := c.Split(id, []Child{{Text: "left", Wall: 10}, {Text: "right", Wall: 10}}, false)
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = c.Merge(taskID, MergeSpec{Text: "merged", Participants: []Participant{{ID: r.Children[0].ID, Wall: 1}, {ID: split.Children[0].ID, Wall: 1}}})
+	_, e = c.Merge(taskID, MergeSpec{Text: "merged", Participants: []Participant{{ID: a.ID, Wall: 0}, {ID: split.Children[0].ID, Wall: 1}}})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = c.Allocate(a.ID, 10); e != nil {
+	if _, e = c.Allocate(split.Children[1].ID, 10); e != nil {
 		t.Fatal(e)
 	}
 	requireIdle(t, c)
@@ -198,7 +206,7 @@ func TestAllCreationPathsRemainInert(t *testing.T) {
 	texts := map[string]bool{}
 	for _, o := range readState(t, c).Options {
 		texts[o.Text] = true
-		if o.Remaining == 0 {
+		if o.Remaining == 0 && o.Status == "OPEN" {
 			if _, e = c.Allocate(o.ID, 1); e != nil {
 				t.Fatal(e)
 			}
@@ -212,7 +220,7 @@ func TestAllCreationPathsRemainInert(t *testing.T) {
 	requireIdle(t, c)
 }
 
-func TestChainTerminationConsumesRelease(t *testing.T) {
+func TestStoppedActivityRetainsChange(t *testing.T) {
 	for _, outcome := range []string{"DROP_FINAL", "invalid", "CRASHED", "TIMED_OUT", "INTERRUPTED", "promotion"} {
 		t.Run(outcome, func(t *testing.T) {
 			c, taskID, id := claimFixture(t, "option.release", "process.execute", "repository.read", "sandbox.write")
@@ -246,15 +254,30 @@ func TestChainTerminationConsumesRelease(t *testing.T) {
 				t.Fatal("termination changed Option")
 			}
 			requireIdle(t, c)
-			if _, e = c.ReleaseOption(id); e != nil {
-				t.Fatal("second explicit cycle", e)
+			if _, e = c.ReleaseOption(id); model.Code(e) != "INVALID_STATE" {
+				t.Fatal("duplicate lifecycle", e)
+			}
+			if len(s.Changes) != 1 {
+				t.Fatal("Change lost")
+			}
+			for _, ch := range s.Changes {
+				expected := "BLOCKED"
+				if outcome == "INTERRUPTED" {
+					expected = "PAUSED"
+				}
+				if outcome == "promotion" {
+					expected = "STALE"
+				}
+				if ch.State != expected {
+					t.Fatalf("state %s expected %s", ch.State, expected)
+				}
 			}
 		})
 	}
 }
 
 func TestCommentThreadAndDiscussionCompletion(t *testing.T) {
-	c, taskID, id := claimFixture(t, "claim.publish", "option.discuss", "option.release", "option.refine", "option.split", "option.merge", "option.allocate")
+	c, taskID, id := claimFixture(t, "option.propose", "claim.publish", "option.discuss", "option.release", "option.refine", "option.split", "option.merge", "option.allocate")
 	before := readState(t, c)
 	comment, e := c.CommentOption(id, "why?")
 	if e != nil {
@@ -301,11 +324,12 @@ func TestCommentThreadAndDiscussionCompletion(t *testing.T) {
 	if _, e = c.CommentOption(id, "additional context for next Attempt"); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = c.Split(id, []Child{{Text: "changed"}}, true); model.Code(e) != "BLOCKED" {
+	current, e := c.Propose(taskID, "control plane", "")
+	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = c.Merge(taskID, MergeSpec{Text: "merge", Participants: []Participant{{ID: id}, {ID: comment.SubjectID}}}); model.Code(e) != "BLOCKED" {
-		t.Fatal(e)
+	if _, e = c.Split(current.ID, []Child{{Text: "changed"}}, true); e != nil {
+		t.Fatal("active discussion blocked refinement", e)
 	}
 	if _, e = c.Allocate(id, 1); e != nil {
 		t.Fatal("active allocation must remain allowed", e)

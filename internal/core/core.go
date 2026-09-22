@@ -232,9 +232,6 @@ func (c *Core) Split(id string, children []Child, refine bool) (*SplitResult, er
 		if e != nil {
 			return e
 		}
-		if optionInPending(s, o) {
-			return model.Err("BLOCKED", "Option belongs to a pending chain")
-		}
 		var total int64
 		for _, child := range children {
 			if strings.TrimSpace(child.Text) == "" {
@@ -256,6 +253,10 @@ func (c *Core) Split(id string, children []Child, refine bool) (*SplitResult, er
 				return e
 			}
 			result.Children = append(result.Children, n)
+		}
+		if refine {
+			o.Status = "CLOSED"
+			o.CloseReason = "SUPERSEDED"
 		}
 		s.Touch(t.ID)
 		return nil
@@ -283,9 +284,6 @@ func (c *Core) Merge(taskID string, spec MergeSpec) (*model.Option, error) {
 			if e != nil {
 				return e
 			}
-			if optionInPending(s, o) {
-				return model.Err("BLOCKED", "merge participant belongs to a pending chain")
-			}
 			if o.TaskID != taskID || seen[p.ID] {
 				return model.Err("PRECONDITION_FAILED", "cross-Task/duplicate merge participant")
 			}
@@ -309,6 +307,10 @@ func (c *Core) Merge(taskID string, spec MergeSpec) (*model.Option, error) {
 				return e
 			}
 		}
+		for _, p := range spec.Participants {
+			s.Options[p.ID].Status = "CLOSED"
+			s.Options[p.ID].CloseReason = "SUPERSEDED"
+		}
 		s.Touch(taskID)
 		return nil
 	})
@@ -327,10 +329,7 @@ func (c *Core) Allocate(id string, n int64) (*model.Option, error) {
 		if e != nil {
 			return e
 		}
-		if p := s.Options[o.Parent]; p != nil && p.Status == "CLOSED" {
-			return model.Err("INVALID_STATE", "resource parent CLOSED")
-		}
-		if e = ledger.Move(s, o.Parent, id, n); e != nil {
+		if e = ledger.Allocate(s, id, n); e != nil {
 			return e
 		}
 		s.Touch(o.TaskID)
@@ -359,6 +358,7 @@ func closeOption(s *model.State, id string) error {
 		return e
 	}
 	o.Status = "CLOSED"
+	o.CloseReason = "FULFILLED"
 	if p := s.Pending[o.TaskID]; p != nil && p.OptionID == id {
 		delete(s.Pending, o.TaskID)
 	}
@@ -386,6 +386,11 @@ func closeTask(s *model.State, id string) error {
 	}
 	t.Resources.Retired += n
 	t.Status = "CLOSED"
+	for _, ch := range s.Changes {
+		if ch.TaskID == id && !ch.Terminal() {
+			ch.Set(ch.Stage, "PAUSED", "TASK_CLOSED")
+		}
+	}
 	delete(s.Pending, id)
 	delete(s.Cancellations, id)
 	s.Exploration[id].Done = true
@@ -479,6 +484,12 @@ func (c *Core) CreateClaim(ctx context.Context, taskID, kind, id, typ string, pa
 	return result, e
 }
 func (c *Core) CloseOption(ctx context.Context, id string) (*model.Option, error) {
+	return c.CloseOptionReason(ctx, id, "FULFILLED")
+}
+func (c *Core) CloseOptionReason(ctx context.Context, id, reason string) (*model.Option, error) {
+	if reason != "FULFILLED" && reason != "SUPERSEDED" && reason != "ABANDONED" {
+		return nil, model.Err("USAGE_ERROR", "invalid close reason")
+	}
 	if e := c.Operator().Require("option.complete"); e != nil {
 		return nil, e
 	}
@@ -518,8 +529,15 @@ func (c *Core) CloseOption(ctx context.Context, id string) (*model.Option, error
 		if cancelled && !store.TaskQuiescent(s, t.ID) {
 			return model.Err("BLOCKED", "Option close requires settled cancellation")
 		}
-		if _, e = addClaim(s, t, c.Operator(), "OPTION", id, "fulfilled", json.RawMessage(`{}`), t.SHA, t.Revision); e != nil {
-			return e
+		if reason == "FULFILLED" {
+			if _, e = addClaim(s, t, c.Operator(), "OPTION", id, "fulfilled", json.RawMessage(`{}`), t.SHA, t.Revision); e != nil {
+				return e
+			}
+		} else {
+			if e = closeOption(s, id); e != nil {
+				return e
+			}
+			o.CloseReason = reason
 		}
 		delete(s.Cancellations, t.ID)
 		s.Touch(t.ID)
@@ -585,6 +603,11 @@ func (c *Core) finishLifecycle(id, action, sha, identity string) (*model.Task, e
 			t.Status = "ACTIVE"
 			t.SHA = sha
 			s.RepositoryIdentities[id] = identity
+			for _, ch := range s.Changes {
+				if ch.TaskID == id && !ch.Terminal() && ch.BaseSHA != sha {
+					ch.Set(ch.Stage, "STALE", "BASE_CHANGED")
+				}
+			}
 		case "suspend":
 			if t.Status != "ACTIVE" {
 				return model.Err("INVALID_STATE", "Task not ACTIVE")
@@ -612,7 +635,25 @@ func (c *Core) requestCancellation(taskID string) error {
 			return model.Err("NOT_FOUND", "Task")
 		}
 		s.Cancellations[taskID] = true
-		delete(s.Pending, taskID)
+		for _, ch := range s.Changes {
+			if ch.TaskID == taskID && !ch.Terminal() {
+				ch.Set(ch.Stage, "PAUSED", "")
+			}
+		}
+		// Keep the selected activity until settlement; its monitor observes cancellation.
+		if s.SlotTask != taskID {
+			delete(s.Pending, taskID)
+		}
+		requests := s.Requests[:0]
+		for _, p := range s.Requests {
+			if p.TaskID != taskID {
+				requests = append(requests, p)
+			} else if r := s.CIRuns[p.CIRunID]; r != nil && r.Status == "QUEUED" {
+				r.Status = "TERMINATED"
+				r.Ended = model.Now()
+			}
+		}
+		s.Requests = requests
 		for id, a := range s.Attempts {
 			if a.TaskID == taskID && a.Active() {
 				s.Interrupts[id] = true

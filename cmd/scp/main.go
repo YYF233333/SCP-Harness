@@ -18,6 +18,7 @@ import (
 	"scp-harness/internal/core"
 	"scp-harness/internal/model"
 	"scp-harness/internal/scheduler"
+	"scp-harness/internal/store"
 	"scp-harness/internal/wsl"
 )
 
@@ -68,6 +69,9 @@ func run(args []string, out, errout io.Writer) (exit int) {
 	}
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
 		switch args[0] {
+		case "--help":
+			help(out, "")
+			return 0
 		case "--version":
 			if len(args) != 1 {
 				return emit(nil, model.Err("USAGE_ERROR", "--version takes no arguments"))
@@ -96,20 +100,54 @@ func run(args []string, out, errout io.Writer) (exit int) {
 	}
 	command = args[0]
 	args = args[1:]
+	if command == "help" {
+		group := ""
+		if len(args) > 0 {
+			group = args[0]
+		}
+		help(out, group)
+		return 0
+	}
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "help") {
+		help(out, command)
+		return 0
+	}
 	switch command {
-	case "task", "option", "attempt", "artifact", "claim", "blocker":
+	case "task", "option", "attempt", "artifact", "claim", "blocker", "change", "ci", "config":
 		if len(args) == 0 {
 			return emit(nil, model.Err("USAGE_ERROR", "subcommand required"))
 		}
 		command += "." + args[0]
 		args = args[1:]
 	}
-	if command == "attempt.watch" && asJSON {
+	if len(args) == 1 && args[0] == "--help" {
+		help(out, command)
+		return 0
+	}
+	if strings.HasSuffix(command, ".watch") && asJSON {
 		return emit(nil, model.Err("USAGE_ERROR", "attempt watch does not support --json"))
+	}
+	if e := validateCommand(command, args); e != nil {
+		return emit(nil, e)
 	}
 	cfg, e := config.Load(configPath)
 	if e != nil {
 		return emit(nil, e)
+	}
+	if command != "init" {
+		db, re := store.OpenReadOnly(cfg.Database)
+		if re != nil {
+			return emit(nil, re)
+		}
+		st, re := db.Read()
+		db.Close()
+		if re != nil {
+			return emit(nil, re)
+		}
+		args, re = resolveArguments(st, command, args)
+		if re != nil {
+			return emit(nil, re)
+		}
 	}
 	// Observations never open the normal controller or its error/blocker path.
 	if command == "attempt.watch" || command == "attempt.diff" {
@@ -148,7 +186,17 @@ func run(args []string, out, errout io.Writer) (exit int) {
 		}
 		return 0
 	}
-	c, e := core.Open(cfg, command == "init")
+	var c *core.Core
+	readonly := command == "status" || command == "config.show" || strings.HasSuffix(command, ".show") || strings.HasSuffix(command, ".list") || strings.HasSuffix(command, ".watch") || command == "option.thread"
+	if readonly {
+		var db *store.Store
+		db, e = store.OpenReadOnly(cfg.Database)
+		if e == nil {
+			c = &core.Core{Store: db, Config: cfg}
+		}
+	} else {
+		c, e = core.Open(cfg, command == "init")
+	}
 	if e != nil {
 		return emit(nil, e)
 	}
@@ -156,6 +204,17 @@ func run(args []string, out, errout io.Writer) (exit int) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(errout, nil)))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if command == "change.watch" || command == "ci.watch" {
+		if command == "change.watch" {
+			e = c.WatchChange(ctx, args[0], out)
+		} else {
+			e = c.WatchCI(ctx, args[0], out)
+		}
+		if e != nil {
+			return emit(nil, e)
+		}
+		return 0
+	}
 	data, e := execute(ctx, c, command, args)
 	if model.Exit(model.Code(e)) == 5 {
 		_ = c.Block(model.Code(e), "", "", "", e.Error())
@@ -183,7 +242,7 @@ func parse(f *flag.FlagSet, args []string) error {
 		return model.Err("USAGE_ERROR", "unexpected positional arguments")
 	}
 	required := map[string][]string{
-		"task.create": {"objective", "repo", "ref", "responsible-actor", "wall-ms"}, "task.extend": {"wall-ms"}, "option.list": {"task"}, "option.propose": {"task", "text"}, "option.refine": {"text"}, "option.comment": {"text"}, "option.discuss": {"text"}, "option.split": {"spec"}, "option.merge": {"task", "spec"}, "option.allocate": {"wall-ms"}, "artifact.export": {"out"}, "claim.create": {"task", "subject-type", "subject-id", "type"},
+		"task.create": {"objective", "repo", "ref", "responsible-actor", "wall-ms"}, "task.revise": {"objective"}, "task.extend": {"wall-ms"}, "option.list": {"task"}, "option.propose": {"task", "text"}, "option.refine": {"text"}, "option.comment": {"text"}, "option.discuss": {"text"}, "option.split": {"spec"}, "option.merge": {"task", "spec"}, "option.allocate": {"wall-ms"}, "artifact.export": {"out"}, "claim.create": {"task", "subject-type", "subject-id", "type"},
 	}
 	provided := map[string]bool{}
 	f.Visit(func(v *flag.Flag) { provided[v.Name] = true })
@@ -208,7 +267,17 @@ func readSpec(path string, v any) error {
 	return nil
 }
 func execute(ctx context.Context, c *core.Core, command string, args []string) (any, error) {
-	positional := map[string]bool{"task.extend": true, "task.suspend": true, "task.resume": true, "task.close": true, "task.show": true, "option.show": true, "option.release": true, "option.comment": true, "option.discuss": true, "option.thread": true, "option.refine": true, "option.split": true, "option.allocate": true, "option.close": true, "attempt.show": true, "attempt.interrupt": true, "artifact.show": true, "artifact.export": true, "blocker.resolve": true}
+	if strings.HasPrefix(command, "change.") || strings.HasPrefix(command, "ci.") {
+		return executeChange(ctx, c, command, args)
+	}
+	if command == "config.show" {
+		s, e := c.Read()
+		if e != nil {
+			return nil, e
+		}
+		return map[string]any{"config_path": c.Config.Path, "disk_config_hash": c.Config.DiskHash, "scheduler_effective_config_hash": s.SchedulerConfigHash, "scheduler_started_at": s.SchedulerStarted, "restart_required": s.SchedulerConfigHash != "" && (s.SchedulerConfigHash != c.Config.Hash() || s.SchedulerDiskHash != c.Config.DiskHash)}, nil
+	}
+	positional := map[string]bool{"task.revise": true, "task.extend": true, "task.suspend": true, "task.resume": true, "task.close": true, "task.show": true, "option.show": true, "option.release": true, "option.comment": true, "option.discuss": true, "option.thread": true, "option.refine": true, "option.split": true, "option.allocate": true, "option.close": true, "attempt.show": true, "attempt.interrupt": true, "artifact.show": true, "artifact.export": true, "blocker.resolve": true}
 	f, id, args, e := flags(command, args, positional[command])
 	if e != nil {
 		return nil, e
@@ -218,7 +287,7 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		if e = parse(f, args); e != nil {
 			return nil, e
 		}
-		return map[string]any{"schema_version": 0, "database": c.Config.Database, "artifact_store": c.Config.Artifacts}, nil
+		return map[string]any{"schema_version": 2, "database": c.Config.Database, "artifact_store": c.Config.Artifacts}, nil
 	case "run":
 		if e = parse(f, args); e != nil {
 			return nil, e
@@ -265,7 +334,33 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 			}
 			return blockers[i].Created < blockers[j].Created
 		})
-		return map[string]any{"fail_stop": s.FailStop(), "execution_slot": s.Slot, "tasks": tasks, "running_attempt": attempt, "unresolved_blockers": blockers}, nil
+		changes := []*model.Change{}
+		attention := []*model.Change{}
+		queued := 0
+		var activeChange *model.Change
+		for _, ch := range s.Changes {
+			changes = append(changes, ch)
+			if ch.State == "QUEUED" {
+				queued++
+			}
+			if ch.State == "PAUSED" || ch.State == "BLOCKED" || ch.State == "STALE" {
+				attention = append(attention, ch)
+			}
+			if ch.State == "RUNNING" {
+				activeChange = ch
+			}
+		}
+		var activity any
+		if s.Slot.Owner != nil {
+			if a := s.Attempts[*s.Slot.Owner]; a != nil {
+				activity = a
+			} else {
+				activity = s.CIRuns[*s.Slot.Owner]
+			}
+		} else if s.Slot.State == "BUSY" {
+			activity = map[string]string{"kind": s.Slot.Kind}
+		}
+		return map[string]any{"executing_activity": activity, "current_change": activeChange, "changes": changes, "queued_change_count": queued, "attention_changes": attention, "fail_stop": s.FailStop(), "execution_slot": s.Slot, "tasks": tasks, "running_attempt": attempt, "unresolved_blockers": blockers}, nil
 	case "task.create":
 		objective := f.String("objective", "", "")
 		repo := f.String("repo", "", "")
@@ -276,6 +371,12 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 			return nil, e
 		}
 		return c.CreateTask(ctx, *objective, *repo, *ref, *actor, *wall)
+	case "task.revise":
+		objective := f.String("objective", "", "")
+		if e = parse(f, args); e != nil {
+			return nil, e
+		}
+		return c.ReviseTask(id, *objective)
 	case "task.extend":
 		wall := f.Int64("wall-ms", 0, "")
 		if e = parse(f, args); e != nil {
@@ -343,6 +444,17 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		if e = readSpec(*path, &spec); e != nil {
 			return nil, e
 		}
+		st, re := c.Read()
+		if re != nil {
+			return nil, re
+		}
+		for i := range spec.Participants {
+			resolved, re := core.ResolveID(st, "option", spec.Participants[i].ID)
+			if re != nil {
+				return nil, re
+			}
+			spec.Participants[i].ID = resolved
+		}
 		return c.Merge(*task, spec)
 	case "option.allocate":
 		wall := f.Int64("wall-ms", 0, "")
@@ -351,10 +463,11 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		}
 		return c.Allocate(id, *wall)
 	case "option.close":
+		reason := f.String("reason", "ABANDONED", "")
 		if e = parse(f, args); e != nil {
 			return nil, e
 		}
-		return c.CloseOption(ctx, id)
+		return c.CloseOptionReason(ctx, id, *reason)
 	case "attempt.interrupt":
 		if e = parse(f, args); e != nil {
 			return nil, e
@@ -419,7 +532,13 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 		switch command {
 		case "task.show":
 			if v := s.Tasks[id]; v != nil {
-				return v, nil
+				revisions := []model.ObjectiveRevision{}
+				for _, revision := range s.ObjectiveRevisions {
+					if revision.TaskID == id {
+						revisions = append(revisions, revision)
+					}
+				}
+				return map[string]any{"task": v, "objective_revisions": revisions}, nil
 			}
 		case "option.show":
 			if v := s.Options[id]; v != nil {
@@ -508,6 +627,12 @@ func execute(ctx context.Context, c *core.Core, command string, args []string) (
 			}
 		}
 		sort.Slice(items, func(i, j int) bool {
+			if command == "option.list" {
+				a, b := items[i].data.(*model.Option), items[j].data.(*model.Option)
+				if a.Status != b.Status {
+					return a.Status == "OPEN"
+				}
+			}
 			if items[i].created == items[j].created {
 				return items[i].id < items[j].id
 			}

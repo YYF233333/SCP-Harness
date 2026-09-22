@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestInfluenceCannotChangeSchedulingAuthorizationOrLease(t *testing.T) {
-	c, taskID, id := claimFixture(t, "option.release", "option.propose", "option.allocate", "sandbox.write", "process.execute", "repository.read")
+	c, taskID, id := claimFixture(t, "change.resume", "option.release", "option.propose", "option.allocate", "sandbox.write", "process.execute", "repository.read")
 	owner := "test-owner"
 	if _, e := c.ReleaseOption(id); e != nil {
 		t.Fatal(e)
@@ -40,7 +41,11 @@ func TestInfluenceCannotChangeSchedulingAuthorizationOrLease(t *testing.T) {
 	if next, e := c.Next(owner); e != nil || next != nil {
 		t.Fatal("influence released a chain", e)
 	}
-	if _, e = c.ReleaseOption(id); e != nil {
+	var changeID string
+	for id := range readState(t, c).Changes {
+		changeID = id
+	}
+	if _, e = c.ChangeAction(context.Background(), changeID, "resume"); e != nil {
 		t.Fatal(e)
 	}
 	p, e = c.Next(owner)
@@ -150,7 +155,7 @@ func TestFreshMutationSeedArchitecture(t *testing.T) {
 					return true
 				}
 				typ, ok := lit.Type.(*ast.SelectorExpr)
-				if !ok || typ.Sel.Name != "Step" {
+				if !ok || typ.Sel.Name != "Change" {
 					return true
 				}
 				fields := map[string]string{}
@@ -168,7 +173,7 @@ func TestFreshMutationSeedArchitecture(t *testing.T) {
 						fields[key.Name], _ = strconv.Unquote(value.Value)
 					}
 				}
-				if fields["Operation"] == "mutation" && fields["TargetType"] == "OPTION" {
+				if fields["Stage"] == "MUTATION" && fields["State"] == "QUEUED" {
 					seeds++
 					if rel != "internal/core/discussion.go" || fn.Name.Name != "ReleaseOption" {
 						t.Errorf("fresh mutation seed outside ReleaseOption: %s/%s", rel, fn.Name.Name)

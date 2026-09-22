@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"scp-harness/internal/config"
 	"scp-harness/internal/ledger"
@@ -32,14 +33,17 @@ func (c *Core) Anchor(s *model.State, p *model.Step) (string, error) {
 }
 func (c *Core) runnable(s *model.State, p *model.Step) bool {
 	t := s.Tasks[p.TaskID]
+	if ch := s.Changes[p.ChangeID]; ch != nil && ch.State != "QUEUED" && ch.State != "RUNNING" {
+		return false
+	}
 	if t == nil || t.Status != "ACTIVE" || s.Cancellations[p.TaskID] || s.FailStop() {
 		return false
 	}
-	if p.OptionID != "" && (s.Options[p.OptionID] == nil || s.Options[p.OptionID].Status != "OPEN") {
+	if p.OptionID != "" && (s.Options[p.OptionID] == nil || s.Options[p.OptionID].Status != "OPEN" && (p.ChangeID == "" && p.Operation != "discussion" || s.Options[p.OptionID].CloseReason != "SUPERSEDED")) {
 		return false
 	}
 	profile, runner := "", ""
-	if p.Operation == "protected_test" {
+	if p.Operation == "ci" {
 		runner = c.Config.WSL.TestDistro
 	} else if p.Operation != "promotion" {
 		profile = c.Config.Profile(p.Operation).ID
@@ -52,32 +56,59 @@ func (c *Core) runnable(s *model.State, p *model.Step) bool {
 	return e == nil && s.Accounts[anchor] != nil && s.Accounts[anchor].Remaining > 0
 }
 
-// Next persists the exact target before preparation. An unavailable next step
-// keeps this record; it cannot be replaced with an authoritative-state mutation.
+// Next selects one activity. Change owns lifecycle; Pending only records the selected activity.
 func (c *Core) Next(owner string) (*model.Step, error) {
 	var next *model.Step
 	e := c.Update(func(s *model.State) error {
-		if s.Slot.State == "BUSY" && s.SlotOwner != owner {
+		if s.Slot.State != "IDLE" {
 			return model.Err("BLOCKED", "global execution slot is busy")
 		}
-		tasks := SortedTasks(s)
-		if s.Slot.State == "BUSY" {
-			p := s.Pending[s.SlotTask]
-			if p != nil && c.runnable(s, p) {
-				next = p
-				return nil
-			}
-			release(s)
-		}
-		for _, t := range tasks {
-			if p := s.Pending[t.ID]; p != nil && c.runnable(s, p) {
+		for _, p := range s.Requests {
+			if c.runnable(s, p) {
 				next = p
 				break
 			}
 		}
+		changes := []*model.Change{}
+		for _, ch := range s.Changes {
+			if ch.State == "QUEUED" && ch.Stage != "AWAIT_PROMOTION" {
+				changes = append(changes, ch)
+			}
+		}
+		sort.Slice(changes, func(i, j int) bool {
+			a, b := changes[i], changes[j]
+			if a.Started != b.Started {
+				return a.Started
+			}
+			if a.Created == b.Created {
+				return a.ID < b.ID
+			}
+			return a.Created < b.Created
+		})
 		if next == nil {
-			for _, t := range tasks {
-				if t.Status != "ACTIVE" || s.Cancellations[t.ID] || s.Pending[t.ID] != nil {
+			for _, ch := range changes {
+				if ch.BaseSHA != s.Tasks[ch.TaskID].SHA {
+					ch.Set(ch.Stage, "STALE", "BASE_CHANGED")
+					continue
+				}
+				p := ChangeStep(ch)
+				if p != nil && c.runnable(s, p) {
+					next = p
+					ch.Started = true
+					ch.Set(ch.Stage, "RUNNING", "")
+					break
+				}
+				if p != nil {
+					anchor, e := c.Anchor(s, p)
+					if e == nil && s.Accounts[anchor].Remaining <= 0 {
+						ch.Set(ch.Stage, "BLOCKED", "INSUFFICIENT_RESOURCE")
+					}
+				}
+			}
+		}
+		if next == nil {
+			for _, t := range SortedTasks(s) {
+				if t.Status != "ACTIVE" || s.Cancellations[t.ID] {
 					continue
 				}
 				x := s.Exploration[t.ID]
@@ -90,7 +121,6 @@ func (c *Core) Next(owner string) (*model.Step, error) {
 					s.Touch(t.ID)
 					continue
 				}
-				s.Pending[t.ID] = p
 				if c.runnable(s, p) {
 					next = p
 					break
@@ -98,7 +128,8 @@ func (c *Core) Next(owner string) (*model.Step, error) {
 			}
 		}
 		if next != nil {
-			s.Slot = model.Slot{State: "BUSY"}
+			s.Pending[next.TaskID] = next
+			s.Slot = model.Slot{State: "BUSY", Kind: next.Operation}
 			s.SlotTask = next.TaskID
 			s.SlotOwner = owner
 			s.SlotPID = os.Getpid()
@@ -137,12 +168,26 @@ func explorationStep(task string, x *model.Exploration, n int) *model.Step {
 	return p
 }
 func release(s *model.State) {
+	if p := s.Pending[s.SlotTask]; p != nil {
+		if ch := s.Changes[p.ChangeID]; ch != nil && ch.State == "RUNNING" {
+			ch.Set(ch.Stage, "QUEUED", ch.Reason)
+		}
+		delete(s.Pending, s.SlotTask)
+	}
 	s.Slot = model.Slot{State: "IDLE"}
 	s.SlotTask = ""
 	s.SlotOwner = ""
 	s.SlotPID = 0
 }
-func finishChain(s *model.State, p *model.Step) {
+func finishActivity(s *model.State, p *model.Step) {
+	if p.RequestID != "" {
+		for i, request := range s.Requests {
+			if request.RequestID == p.RequestID {
+				s.Requests = append(s.Requests[:i], s.Requests[i+1:]...)
+				break
+			}
+		}
+	}
 	delete(s.Pending, p.TaskID)
 	release(s)
 }
@@ -165,9 +210,12 @@ func (c *Core) PrepareAttempt(p model.Step, owner string) (*model.Attempt, error
 			return nil, e
 		}
 	}
+	if p.Operation == "mutation" && p.TargetType == "ARTIFACT" && (!card.Sees("ci.result") || !card.Sees("review.findings")) {
+		return nil, model.Err("CAPABILITY_DENIED", "rework requires CI evidence and review findings context")
+	}
 	if p.Operation == "review" {
-		if !card.Sees("test.result") {
-			return nil, model.Err("CAPABILITY_DENIED", "review must be allowed to receive protected test result")
+		if !card.Sees("ci.result") {
+			return nil, model.Err("CAPABILITY_DENIED", "review must be allowed to receive CI evidence")
 		}
 	}
 	if profile.Workspace != "none" && p.TargetType != "ARTIFACT" {
@@ -177,13 +225,22 @@ func (c *Core) PrepareAttempt(p model.Step, owner string) (*model.Attempt, error
 	}
 	var out *model.Attempt
 	e := c.Update(func(s *model.State) error {
+		if (p.Operation == "mutation" || p.Operation == "review") && (p.ChangeID == "" || s.Changes[p.ChangeID] == nil) {
+			return model.Err("PRECONDITION_FAILED", "agent development requires Change authority")
+		}
+		if p.ChangeID != "" {
+			expected := ChangeStep(s.Changes[p.ChangeID])
+			if expected == nil || expected.Operation != p.Operation || expected.TargetID != p.TargetID {
+				return model.Err("PRECONDITION_FAILED", "Change stage/target changed")
+			}
+		}
 		if s.SlotOwner != owner || s.Slot.State != "BUSY" {
 			return model.Err("BLOCKED", "execution slot not owned")
 		}
 		if !c.runnable(s, &p) {
 			return model.Err("BLOCKED", "step no longer runnable")
 		}
-		if p.TargetType == "OPTION" && (s.Options[p.TargetID] == nil || s.Options[p.TargetID].Status != "OPEN") {
+		if p.TargetType == "OPTION" && (s.Options[p.TargetID] == nil || s.Options[p.TargetID].Status != "OPEN" && (p.ChangeID == "" && p.Operation != "discussion" || s.Options[p.TargetID].CloseReason != "SUPERSEDED")) {
 			return model.Err("INVALID_STATE", "Attempt input Option is CLOSED or missing")
 		}
 		for _, id := range p.Participants {
@@ -210,13 +267,20 @@ func (c *Core) PrepareAttempt(p model.Step, owner string) (*model.Attempt, error
 			kind = "TASK"
 		}
 		id := model.ID()
-		out = &model.Attempt{ID: id, TaskID: t.ID, Operation: p.Operation, TargetType: p.TargetType, TargetID: p.TargetID, Actor: card.ID, Profile: profile.ID, AnchorType: kind, AnchorID: anchor, Lease: lease, SHA: t.SHA, Revision: t.Revision, Started: model.Now(), Status: "PREPARING"}
+		objective := t.Objective
+		if ch := s.Changes[p.ChangeID]; ch != nil {
+			objective = ch.Objective
+		}
+		out = &model.Attempt{Objective: objective, ChangeID: p.ChangeID, ID: id, TaskID: t.ID, Operation: p.Operation, TargetType: p.TargetType, TargetID: p.TargetID, Actor: card.ID, Profile: profile.ID, AnchorType: kind, AnchorID: anchor, Lease: lease, SHA: t.SHA, Revision: t.Revision, Started: model.Now(), Status: "PREPARING"}
 		logs := filepath.Join(filepath.Dir(c.Config.Database), "runtime", id+".logs")
 		out.Stdout, out.Stderr = filepath.Join(logs, "stdout.log"), filepath.Join(logs, "stderr.log")
 		if e = ledger.Reserve(s, id, anchor, lease); e != nil {
 			return e
 		}
 		s.Attempts[id] = out
+		if ch := s.Changes[p.ChangeID]; ch != nil && p.Operation == "review" {
+			ch.ReviewAttemptID = id
+		}
 		s.Slot.Owner = &id
 		s.Touch(t.ID)
 		return nil
@@ -270,7 +334,13 @@ func (c *Core) Complete(v Completion) error {
 			v.Valid = false
 		}
 		if v.Artifact != nil && a.Operation == "mutation" {
+			v.Artifact.ChangeID = a.ChangeID
 			s.Artifacts[v.Artifact.ID] = v.Artifact
+			if ch := s.Changes[a.ChangeID]; ch != nil {
+				ch.ArtifactID = v.Artifact.ID
+				ch.CIRunID = ""
+				ch.ReviewAttemptID = ""
+			}
 			a.ArtifactID = &v.Artifact.ID
 		}
 		a.Stdout = v.Stdout
@@ -286,10 +356,19 @@ func (c *Core) Complete(v Completion) error {
 			return e
 		}
 		s.Slot.Owner = nil
+		ch := s.Changes[a.ChangeID]
 		if s.Interrupts[a.ID] || s.Cancellations[a.TaskID] {
 			a.Status = "INTERRUPTED"
 			v.Valid = false
 			delete(s.Interrupts, a.ID)
+		}
+		if ch != nil && (s.Interrupts[a.ID] || s.Cancellations[a.TaskID] || a.Status == "INTERRUPTED" || ch.State == "PAUSED" || ch.State == "ABORTED") {
+			if ch.State != "ABORTED" {
+				ch.Set(ch.Stage, "PAUSED", "")
+			}
+			finishActivity(s, &v.Step)
+			s.Touch(a.TaskID)
+			return nil
 		}
 		if a.Status == "TERMINATED" && model.Exit(v.Reason) >= 4 {
 			if e := c.block(s, v.Reason, a.TaskID, a.Profile, c.Config.WSL.Distro, "Attempt "+a.ID+": "+v.Reason); e != nil {
@@ -308,7 +387,7 @@ func (c *Core) Complete(v Completion) error {
 			} else {
 				s.Audit(t.ID, "INVALID_OUTPUT", "discussion ended without reply")
 			}
-			finishChain(s, &v.Step)
+			finishActivity(s, &v.Step)
 			s.Touch(t.ID)
 			return nil
 		}
@@ -362,8 +441,11 @@ func (c *Core) Complete(v Completion) error {
 		} else {
 			s.Audit(t.ID, "INVALID_OUTPUT", "no semantic worker requests applied")
 		}
-		if t.Status != "ACTIVE" || s.Cancellations[t.ID] || v.Step.OptionID != "" && s.Options[v.Step.OptionID].Status != "OPEN" {
-			finishChain(s, &v.Step)
+		if t.Status != "ACTIVE" || s.Cancellations[t.ID] || v.Step.OptionID != "" && s.Options[v.Step.OptionID].Status != "OPEN" && s.Options[v.Step.OptionID].CloseReason != "SUPERSEDED" {
+			if ch != nil && !ch.Terminal() {
+				ch.Set(ch.Stage, "PAUSED", "OPTION_OR_TASK_CLOSED")
+			}
+			finishActivity(s, &v.Step)
 			s.Touch(t.ID)
 			return nil
 		}
@@ -394,53 +476,55 @@ func (c *Core) Complete(v Completion) error {
 						return e
 					}
 					createOption(s, t, v.Result.Text, parent, card.ID, a.SHA, a.Revision, v.Step.Participants, "merge")
+					for _, id := range v.Step.Participants {
+						s.Options[id].Status = "CLOSED"
+						s.Options[id].CloseReason = "SUPERSEDED"
+					}
 				}
 				x.GroupIndex++
 			}
 			p := explorationStep(t.ID, x, c.Config.Exploration.N)
 			if p == nil {
 				x.Done = true
-				finishChain(s, &v.Step)
-			} else {
-				s.Pending[t.ID] = p
+				finishActivity(s, &v.Step)
 			}
-		} else if a.Status != "RETURNED" && !(a.Operation == "review" && (a.Status == "CRASHED" || a.Status == "TIMED_OUT")) {
-			finishChain(s, &v.Step)
-		} else if a.Operation == "mutation" {
-			if !v.Valid || v.Artifact == nil || v.Result.Disposition == "DROP_FINAL" {
-				finishChain(s, &v.Step)
-			} else {
-				p := v.Step
-				p.TargetType = "ARTIFACT"
-				p.TargetID = v.Artifact.ID
-				p.Operation = "mutation"
-				if v.Result.Disposition == "PROMOTE_FINAL" {
-					p.Operation = "protected_test"
+		} else if ch != nil {
+			if a.Status != "RETURNED" || !v.Valid {
+				reason := "AGENT_" + a.Status
+				if a.Status == "RETURNED" {
+					reason = "INVALID_AGENT_OUTPUT"
 				}
-				s.Pending[t.ID] = &p
+				ch.Set(ch.Stage, "BLOCKED", reason)
+			} else if a.Operation == "mutation" {
+				if v.Artifact == nil || v.Result.Disposition == "DROP_FINAL" {
+					ch.Set("MUTATION", "BLOCKED", "NO_SUBMITTED_RESULT")
+				} else {
+					stage := "MUTATION"
+					if v.Result.Disposition == "PROMOTE_FINAL" {
+						stage = "CI"
+					}
+					ch.Set(stage, "QUEUED", "")
+				}
+			} else if a.Operation == "review" {
+				verdict := v.Result.Verdict
+				s.Reviews[v.Step.TargetID] = &model.Review{ArtifactID: v.Step.TargetID, AttemptID: a.ID, CIRunID: ch.CIRunID, Verdict: verdict, Findings: v.Result.Findings, Created: now}
+				ch.ReviewAttemptID = a.ID
+				for _, finding := range v.Result.Findings {
+					payload, _ := json.Marshal(map[string]string{"finding": finding})
+					claim := &model.Claim{ID: model.ID(), TaskID: t.ID, SubjectType: "ARTIFACT", SubjectID: v.Step.TargetID, Type: "review.finding", Payload: payload, Issuer: card.ID, SHA: a.SHA, Revision: a.Revision, Created: now}
+					s.Claims[claim.ID] = claim
+				}
+				if PromotionEvidence(s, ch) {
+					ch.Set("AWAIT_PROMOTION", "QUEUED", "")
+					s.Audit(t.ID, "CHANGE_AWAIT_PROMOTION", ch.ID)
+				} else if verdict == "REJECT" && len(v.Result.Findings) > 0 {
+					ch.Set("MUTATION", "QUEUED", "")
+				} else {
+					ch.Set("REVIEW", "BLOCKED", "REVIEW_REQUIRES_ATTENTION")
+				}
 			}
-		} else if a.Operation == "review" {
-			verdict := "REJECT"
-			findings := []string{}
-			if v.Valid && a.Status == "RETURNED" && card.Has("review.decide") {
-				verdict = v.Result.Verdict
-				findings = v.Result.Findings
-			}
-			s.Reviews[v.Step.TargetID] = &model.Review{ArtifactID: v.Step.TargetID, AttemptID: a.ID, Verdict: verdict, Findings: findings, Created: now}
-			for _, finding := range findings {
-				payload, _ := json.Marshal(map[string]string{"finding": finding})
-				claim := &model.Claim{ID: model.ID(), TaskID: t.ID, SubjectType: "ARTIFACT", SubjectID: v.Step.TargetID, Type: "review.finding", Payload: payload, Issuer: card.ID, SHA: a.SHA, Revision: a.Revision, Created: now}
-				s.Claims[claim.ID] = claim
-			}
-			p := v.Step
-			p.Operation = "mutation"
-			if verdict == "APPROVE" && s.Tests[p.TargetID] != nil && s.Tests[p.TargetID].Outcome == "PASS" {
-				p.Operation = "promotion"
-			} else if verdict == "APPROVE" {
-				s.Audit(t.ID, "PROTECTED_TEST_FAILED", p.TargetID)
-			}
-			s.Pending[t.ID] = &p
 		}
+		finishActivity(s, &v.Step)
 		s.Touch(t.ID)
 		return nil
 	})
@@ -450,46 +534,14 @@ func (c *Core) EndPromotion(p model.Step, sha, reason string) error {
 		if sha != "" {
 			s.Tasks[p.TaskID].SHA = sha
 		}
-		s.Audit(p.TaskID, reason, p.TargetID)
-		finishChain(s, &p)
+		if ch := s.Changes[p.ChangeID]; ch != nil {
+			ch.Set(ch.Stage, "STALE", reason)
+		}
+		s.Audit(p.TaskID, reason, p.ChangeID)
+		finishActivity(s, &p)
 		s.Touch(p.TaskID)
 		return nil
 	})
-}
-func (c *Core) FinishTest(p model.Step, leaseID string, result model.TestResult, elapsed int64, uncertain bool) error {
-	return c.Store.Update(func(s *model.State) error {
-		if e := ledger.Settle(s, leaseID, elapsed, uncertain); e != nil {
-			return e
-		}
-		s.Tests[p.TargetID] = &result
-		if s.Cancellations[p.TaskID] {
-			finishChain(s, &p)
-		} else {
-			p.Operation = "review"
-			s.Pending[p.TaskID] = &p
-		}
-		s.Touch(p.TaskID)
-		return nil
-	})
-}
-func (c *Core) TestLease(p model.Step, id string) (int64, error) {
-	var lease int64
-	e := c.Update(func(s *model.State) error {
-		if !c.runnable(s, &p) {
-			return model.Err("BLOCKED", "protected test no longer runnable")
-		}
-		anchor, e := c.Anchor(s, &p)
-		if e != nil {
-			return e
-		}
-		lease = min(s.Accounts[anchor].Remaining, c.Config.Test.Timeout)
-		if e = ledger.Reserve(s, id, anchor, lease); e != nil {
-			return e
-		}
-		s.Touch(p.TaskID)
-		return nil
-	})
-	return lease, e
 }
 func CardFor(c *config.Config, a *model.Attempt) config.Card {
 	for _, p := range c.Workers {

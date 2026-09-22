@@ -62,12 +62,19 @@ func main() {
 		}
 	}
 	if mode == "protected-test" {
+		for _, name := range []string{"SCP_WORKSPACE", "SCP_INPUT", "SCP_CONTEXT", "SCP_RESULT", "SCP_CONFIG"} {
+			if os.Getenv(name) != "" {
+				panic("worker environment leaked into CI: " + name)
+			}
+		}
 		if _, e := os.Stat("README.md"); e != nil {
 			os.Exit(1)
 		}
 		if len(os.Args) > 2 {
 			switch os.Args[2] {
 			case "fail":
+				fmt.Println("CI failure detail on stdout")
+				fmt.Fprintln(os.Stderr, "CI failure detail on stderr")
 				os.Exit(7)
 			case "timeout":
 				for {
@@ -128,6 +135,40 @@ func main() {
 			fmt.Fprintln(os.Stderr, strings.Repeat("E", 1024))
 		}
 		mutation("DROP_FINAL")
+		return
+	case "pause-worker":
+		write("pause-marker.txt", "preserved before pause\n")
+		fmt.Println("pause workspace ready")
+		for {
+			time.Sleep(time.Second)
+		}
+	case "resume-worker":
+		if read("pause-marker.txt") != "preserved before pause\n" {
+			panic("resume lost Artifact")
+		}
+		write("resumed.txt", "continued\n")
+		mutation("PROMOTE_FINAL")
+		return
+	case "evidence-reviewer", "evidence-rework":
+		for _, name := range []string{"result.json", "stdout.log", "stderr.log"} {
+			data, e := os.ReadFile(filepath.Join(os.Getenv("SCP_CONTEXT"), "ci.result", name))
+			must(e)
+			if len(data) == 0 {
+				panic("missing actual CI evidence")
+			}
+		}
+		if mode == "evidence-reviewer" {
+			review("REJECT", []string{"fix the failing verification"})
+			return
+		}
+		if _, e := os.ReadFile(filepath.Join(os.Getenv("SCP_CONTEXT"), "review.findings.json")); e != nil {
+			panic("rework missing review findings")
+		}
+		if read("written.txt") != "workspace write\n" {
+			panic("rework lost Artifact")
+		}
+		write("reworked.txt", "evidence read\n")
+		mutation("PROMOTE_FINAL")
 		return
 	case "workspace-writer":
 		write("written.txt", "workspace write\n")

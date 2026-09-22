@@ -33,7 +33,7 @@
           "claim.related",
           "artifact.metadata",
           "artifact.content",
-          "test.result",
+          "ci.result",
           "review.findings",
           "ledger.resource",
           "repository.snapshot"
@@ -64,14 +64,23 @@
                   "option.split",
                   "option.merge",
                   "option.allocate",
-                "option.release",
-                "option.discuss",
+                  "option.release",
+                  "option.discuss",
                   "option.complete",
                   "claim.publish",
                   "resource.propose",
                   "review.decide",
                   "attempt.interrupt",
-                  "artifact.export"
+                  "artifact.export",
+                  "task.revise",
+                  "change.promote",
+                  "change.pause",
+                  "change.resume",
+                  "change.abort",
+                  "change.retry-ci",
+                  "change.retry-review",
+                  "change.rework",
+                  "ci.run"
                 ]
               }
             }

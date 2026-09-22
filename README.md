@@ -4,11 +4,11 @@ SCP Harness is a Go CLI for bounded agent work on a Git repository. Core owns
 Task/Option state, wall-time budgets, immutable Artifacts and repository promotion
 in SQLite. Workers run external executables through a strict JSON protocol.
 
-The current workflow is: create a Task, explore candidate Options, discuss/refine,
-allocate a budget, explicitly release an Option, then run mutation, protected
-tests, review and promotion. Funding alone never starts work. `attempt watch`
-and `attempt diff` let an operator inspect live work; interruption and recovery
-are explicit commands.
+v0.2 workflow: create a Task, investigate readonly source, discuss/refine Options, allocate a budget, and explicitly release a Change. Mutation produces immutable Artifacts; independent CI and readonly review lead to AWAIT_PROMOTION. Only a separate `change promote` authorizes repository CAS.
+
+Changes can pause/resume from their current Artifact, retry CI/review, rework or explicitly abort. Every activity releases the single global execution slot; control requests can queue while development runs. Repeated CI timeouts block instead of looping.
+
+Use `scph --help`, `change watch`, `ci watch`, `attempt watch/diff`, `status` and `config show` to inspect execution and evidence. Development and acceptance must use independent config/database/runtime directories; v0.2 must not modify the installed v0.1.0 controller or its production database.
 
 ## Repository map
 
@@ -16,7 +16,7 @@ are explicit commands.
 | --- | --- |
 | `cmd/scp` | CLI commands, JSON projections and executable tests |
 | `internal/core`, `model`, `ledger`, `store` | State transitions, authority, budget accounting and SQLite persistence |
-| `internal/scheduler` | Execution chains, protected tests, promotion and recovery |
+| `internal/scheduler` | Single-activity scheduling, CI, explicit promotion and recovery |
 | `internal/worker`, `wsl`, `boundedexec` | Worker protocol, platform execution and bounded processes |
 | `internal/artifact`, `gitrepo`, `config` | Artifact capture, exact Git snapshots and strict configuration |
 | `testdata` | Role cards and executable worker fixtures |

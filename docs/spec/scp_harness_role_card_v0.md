@@ -19,7 +19,7 @@ A v0 card has exactly six fields and no others:
 {
   "schema_version": 0,
   "id": "operator",
-  "context": ["task.objective","task.state","option.target","artifact.metadata","test.result"],
+  "context": ["task.objective","task.state","option.target","artifact.metadata","ci.result"],
   "capabilities": [
     {"name":"task.create"},
     {"name":"option.propose"},
@@ -46,7 +46,7 @@ option.lineage.direct
 claim.related
 artifact.metadata
 artifact.content
-test.result
+ci.result
 review.findings
 ledger.resource
 repository.snapshot
@@ -103,3 +103,9 @@ are claim.publish, repository.read(scope=task.repository) and
 process.execute(scope=lease.sandbox). Its lease is anchored to Task root even if
 the target Option has no allocation. It receives no write, allocation, release,
 review or completion capabilities. Example: testdata/cards/discussion.json.
+
+## v0.2 host capabilities and CI context
+
+The capability registry adds task.revise, change.promote, change.pause, change.resume, change.abort, change.retry-ci, change.retry-review, change.rework and ci.run. Host CLI authorization checks these explicitly. Worker results cannot invoke any host lifecycle operation; no natural-language request, Claim or verdict grants release/promotion authority.
+
+ci.result is a directory containing result.json, stdout.log and stderr.log. The metadata includes truncation flags and actual verification configuration. Reviewer cards must see ci.result; rework receives CI evidence, reviewer findings and the previous Artifact. Research profiles claiming source investigation require repository.read and readonly workspace.

@@ -122,9 +122,10 @@ func TestWorkerProposalDenialDoesNotDiscardIndependentClaim(t *testing.T) {
 		t.Run(strings.Join(caps, "+"), func(t *testing.T) {
 			c, taskID, optionID := claimFixture(t, caps...)
 			attemptID := model.ID()
-			p := model.Step{TaskID: taskID, OptionID: optionID, Operation: "mutation", TargetType: "OPTION", TargetID: optionID}
+			p := model.Step{ChangeID: model.ID(), TaskID: taskID, OptionID: optionID, Operation: "mutation", TargetType: "OPTION", TargetID: optionID}
 			e := c.Store.Update(func(s *model.State) error {
-				a := &model.Attempt{ID: attemptID, TaskID: taskID, Operation: "mutation", TargetType: "OPTION", TargetID: optionID, Actor: c.Operator().ID, Profile: "operator", AnchorType: "OPTION", AnchorID: optionID, Lease: 100, Status: "RUNNING", Started: model.Now(), SHA: s.Tasks[taskID].SHA}
+				s.Changes[p.ChangeID] = &model.Change{ID: p.ChangeID, TaskID: taskID, OptionID: optionID, BaseSHA: s.Tasks[taskID].SHA, Stage: "MUTATION", State: "RUNNING", Created: model.Now()}
+				a := &model.Attempt{ChangeID: p.ChangeID, ID: attemptID, TaskID: taskID, Operation: "mutation", TargetType: "OPTION", TargetID: optionID, Actor: c.Operator().ID, Profile: "operator", AnchorType: "OPTION", AnchorID: optionID, Lease: 100, Status: "RUNNING", Started: model.Now(), SHA: s.Tasks[taskID].SHA}
 				s.Attempts[a.ID] = a
 				s.Pending[taskID] = &p
 				return ledger.Reserve(s, a.ID, optionID, 100)

@@ -1,93 +1,23 @@
-# SCP Harness v0 封闭规格与自主实施计划
+# SCP Harness v0.2 封闭规格与验收合同
 
 Status: normative product specification + autonomous bootstrap directive
-Date: 2026-09-20
+Date: 2026-09-23
 
 Normative amendment: 2026-09-21，O5 议会明确批准第 10.4 节 Claim 保留值及 resource.propose 双 capability 规则。
 
 Corrective rulings: 2026-09-21，O5 明确要求关闭 R1–R4，并为 R4 增加第 25/29 节的封闭 attribute inspection 规则与独立调用预算；修复后提交第二次独立审核。
 
-## 0. Bootstrap implementation contract
+## 0. 裁决范围与验收
 
-本文是 SCP Harness v0 的**封闭产品规格**，同时也是从空仓库开始的一次 autonomous bootstrap directive。
+本规格已按 O5 的 v0.2 实际使用整改包修订。既有 Git、隔离、不可变性与资源守恒约束继续适用；旧 Pending chain 的生命周期和自动 promotion 语义被本版替换。
+开发与验收只使用开发源码、独立配置、数据库、Artifact/runtime 目录。不得修改安装版 v0.1.0 或正式数据库；旧未验收 Artifact 只能作为参考。
 
-这次 bootstrap 没有人工阶段 Gate。实现者可以连续工作、试错、重构、重写测试、改变实现顺序，直到得到满足本文全部规范的完整系统。不得因为完成某个 Phase、遇到局部测试失败或某个中间实现不可行而停止整个任务；应继续诊断、修改或丢弃失败实现。
+RESOURCE IS NOT AUTHORITY. EXECUTION AUTHORITY IS NOT PROMOTION AUTHORITY.
+INTERRUPTION IS NOT CANCELLATION. FAILURE WITHOUT USEFUL EVIDENCE MUST NOT AUTO-LOOP.
+ATTEMPT IS AGENT EXECUTION; CI IS MACHINE VERIFICATION.
 
-本项目的第一目标是：做出小、机械、可测试、失败模式明确的控制系统。不是构建通用 agent platform。
-
-### 0.1 Authority
-
-本文中的 normative requirement 是最终产品唯一 authority。
-
-实现代码、测试、注释、commit history、实现者自行生成的文档和中间设计都不能重新定义、弱化或覆盖本文。测试是规格的验证手段，不是规格本身；“测试通过”不能豁免任何未满足的 normative requirement。
-
-概念设计 `scp_harness_v0_final.md`、role-card 说明 `scp_harness_role_card_v0.md`、机械 schema `scp_harness_role_card_v0.schema.json` 与 frozen acceptance fixture `scp_harness_v0_walkthrough.md` 是本文的冻结上游工件；它们必须与本文一起提供给实现者。若概念层与本文出现真正冲突，以本文对 v0 可执行行为的更具体定义为准；若 role-card JSON Schema / walkthrough fixture 与本文冲突，则视为规格包不一致，FINAL ACCEPTANCE 不得开始，不能由实现者自行选择一个版本。
-
-### 0.2 Closed-world rule
-
-所有设计事项只允许属于两类：
-
-1. **Normative**：本文规定了外部行为、authority、resource、persistence、protocol、isolation、failure 或 architecture semantics，实现必须精确遵守。
-2. **Implementation-defined**：本文明确没有冻结的内部实现细节，实现者可以自行选择，只要不改变任何 normative behavior。
-
-不存在第三类“本文没写，但实现者可以猜一个产品语义”的空间。
-
-以下默认属于 implementation-defined：私有 helper 的名字与签名、单个 package 内部文件拆分、SQLite 的物理表拆分细节、索引选择、局部算法数据结构、测试组织、临时 commit 历史。除非本文另有明确要求，这些都不得上升为新的产品抽象。
-
-### 0.3 Autonomous implementation freedom
-
-实现者可以：
-
-- 自主决定实现顺序；
-- 交错实现多个 subsystem；
-- 添加、删除或重写自己创建的测试；
-- 重构尚未完成的代码；
-- 丢弃失败实现并重新实现；
-- 使用任意数量临时 commit；
-- 在本文允许的 package 内自行设计私有函数、类型和 SQLite 物理布局。
-
-这些自由不得改变 observable CLI/config contract、Core authority semantics、resource conservation、worker protocol、Git/WSL isolation boundary、failure model、global serialization 或 architecture constraints。
-
-### 0.4 Ambiguity fallback
-
-如果实现时遇到本文确实未定义、且无法从已有 normative rule 唯一推出的边界情况，不得发明新的外部能力、新 authority、新资源来源、新 capability、新 protocol field、新并发语义、provider abstraction 或远程执行机制。
-
-固定 fallback：
-
-1. fail closed；
-2. 不产生新的 authority mutation；
-3. 不 mint resource；
-4. 不丢失已经持久化的 history；
-5. 不扩大 capability；
-6. 不执行未明确授权的 external side effect；
-7. 返回确定性的显式错误并记录 audit context。
-
-该 fallback 只用于真正未定义的边界，不得覆盖本文已经定义的正常路径。
-
-### 0.5 Milestones are not gates
-
-第 46 节 Phase 0-10 只是推荐 implementation milestones。实现者可以跳序、交错、重做或合并实现步骤。
-
-原 Gate 0-10 全部改称 **Acceptance Case A0-A10**。它们只在最终验收时共同成立，不构成中间停止点，不需要人工批准，也不要求每 Phase 一个 commit。
-
-### 0.6 Single final gate
-
-只有一个 Gate：**FINAL ACCEPTANCE**。
-
-只有当最终 repository 同时满足以下条件时，才允许报告 `SCP Harness v0 implementation complete`：
-
-- 本文全部 normative requirement 已实现；
-- Acceptance Case A0-A10 全部通过；
-- 第 44 节 mandatory tests 全部通过；
-- 第 45 节 architecture constraints 全部通过；
-- `go test ./...` 通过；
-- `go vet ./...` 通过；
-- Windows host integration 通过；
-- dedicated `SCP-Worker` WSL2 integration 通过；
-- frozen Vorton walkthrough 全自动通过；
-- 没有 skipped acceptance test、temporary bypass、mocked production path、未实现的 TODO/FIXME、为了过测试而放宽的 production invariant。
-
-若任一 normative requirement 未满足，系统就是未完成；不得用“基本完成”“核心已完成”替代最终验收。
+只能在原仓库开发。不得引入 DAG、child Change、工作流 DSL、worker pool、并行 CI、provider abstraction 或外部 PR 集成。实现细节可自主选择，不能放宽冻结的验收条件。
+最终验收需要 gofmt、Linux `go test ./... -count=1` / `go vet ./...`、真实 Windows/WSL release suite（含 Codex integration）全部通过，无 skipped tests 或未解决 blocker。
 
 ## 1. 固定产品范围
 
@@ -98,12 +28,12 @@ Corrective rulings: 2026-09-21，O5 明确要求关闭 R1–R4，并为 R4 增�
 - 单用户。
 - 单 Core 数据库。
 - 单 scheduler。
-- 全系统同时最多一个 active Attempt。
+- 全系统同时最多一个 execution activity（Attempt、CI、promotion、recovery）。
 - 本地 Git repository。
 - 任意可执行 worker。
 - 一个 Task 绑定一个 authoritative repository。
 - 一个 repository 最多一个 ACTIVE Task。
-- 一个 mutation/review/rework/promotion chain。
+- 多个持久 Change 排队；每个 Change 是单一线性状态机。
 - CLI 操作。
 - SQLite 持久化。
 - immutable Artifact。
@@ -184,6 +114,9 @@ scp-harness/
 不得创建 `domain/application/infrastructure/services/adapters/ports/providers/plugins/framework/repository/sandbox` 等新架构 package。不得为一个实现建立 interface；只有本文已经存在的机械边界（例如 opaque worker executable）可以直接以 concrete struct/function 表达。
 
 ## 4. Core 数据模型
+
+新增 Change / CIRun 的字段、状态与 authority 见第 21/37 节。Artifact 与 Attempt 保存 change_id；Task objective_revision 与 append-only objective revision 记录保留 old/new/operator/timestamp。task revise 只影响后续新 Change，既有 Attempt/Claim/context 不改写。
+
 
 ### 4.1 Task
 
@@ -278,6 +211,9 @@ SQLite 是 Core authority state 的唯一数据库。数据库物理 DDL 属于 
 
 ## 8. ResourceLedger
 
+`min_root_after_transfer_ms = 1200000`：只限制 Task root 向 Option/descendant 转账后的余额，绝不限制 Task-level consumption、refund 或 settlement。descendant allocation 可原子沿现有 parent path 完成。
+
+
 v0 只实现一个强制资源维度：`wall_ms`。不得在 v0 实现 CPU/token/tool-call 等第二个 ledger dimension。Role-card 中即使存在其他 limit/influence key，v0 ledger 也不为其建立资源账户。
 
 资源树固定为：
@@ -346,9 +282,9 @@ destination.remaining += N
 
 不得通过创建新 account 时复制 source balance；新 account 初始余额默认为 0，随后由同一 transaction 内的真实 move 注资。
 
-### 8.4 Refine / split / merge resource semantics
+### 8.4 Refine / split / merge resource semantics (原子转账，refine/merge supersede 原项)
 
-`refine(parent -> child)`：child resource parent = parent Option account；`transfer_wall_ms` 可省略，默认为 0；显式值范围 `0..parent.remaining`。旧 Option 不关闭，零转账不改变 parent balance，child balance=0。
+`refine(parent -> child)`：child resource parent = parent Option account；`transfer_wall_ms` 可省略，默认为 0；显式值范围 `0..parent.remaining`。旧 Option CLOSED/SUPERSEDED；零转账不改变 parent balance，child balance=0。
 
 `split(parent -> children[])`：每个 child resource parent = parent Option account；每个 child 显式指定 allocation。原子事务必须满足：
 
@@ -411,32 +347,17 @@ Core crash 或无法确定精确计量：charge full outstanding lease。
 - Artifact-target work：Artifact 的 `semantic_anchor_option_id`；
 - Task-level/new-route exploration：Task root；
 - cross-Option compare / MergeJudge / MergeSynth：participant resource accounts 的 resource-tree LCA；
-- protected test：被测 Artifact 的 semantic-anchor Option；
+- CI：被测 Artifact 的 semantic-anchor Option；
 - review / rework：被 review/rework Artifact 的 semantic-anchor Option。
 
 Attempt target 和 resource anchor 在 Attempt 创建后冻结，不因 worker 输出或 context 中发现新 Option 而改变。
 
 ## 9. 全局串行执行
 
-v0 使用**一个全局 execution slot**。这比单纯 `global_active_attempt_count <= 1` 更强：任何时刻最多有一个会消费执行资源或改变候选/authoritative state 的 activity。
-
-以下 activity 都占用同一个 global execution slot：
-
-- 任意 worker Attempt（包括 read-only cognitive/review/merge worker）；
-- writable workspace materialization/final capture；
-- protected test invocation；
-- promotion Git construction + CAS；
-- `scp recover` 中会修改 runtime/authority state 的 recovery sequence。
-
-因此 mutation -> Artifact capture -> protected test -> review -> reject/rework 或 approve -> promotion 的一条 in-flight chain 在释放 slot 前，不允许另一个 Task/Option 的执行 activity 插入其中。
-
-允许并发的只有不会获取 execution slot 的纯控制/只读操作，例如 `status/list/show` 和读取已完成 Artifact metadata。
-
-`attempt interrupt` 是唯一 out-of-band control exception：它必须能在 slot 被当前 Attempt 占用时发出终止请求。interrupt 本身不能启动另一项 execution activity；原 owner 必须完成 termination/capture/settlement 并释放 slot 后，scheduler 才能启动下一项工作。
-
-Scheduler 不得创建 worker pool、parallel worker goroutine、async task graph 或预实现 future concurrency。内部为了 process I/O/timeout/cancellation 使用必要 goroutine 可以存在，但不得造成两个 execution activity 同时运行。
-
-Scheduler 按 Task 的 created_at,id 检查既有 Pending，再执行一次性 initial exploration，否则 idle。Allocation 不授予执行 authority，也不影响 priority。
+global executing activity <= 1。slot 仅由正在执行的单次 activity 占有；每次 activity 结束必须释放，Change 不跨 activity 持锁。
+控制面 status/list/show/watch、comment/propose/refine/merge、budget allocation、release、pause/abort 保持可用。正在运行的 activity 不被调度器抢占。
+固定优先级：显式排队的 host agent 请求（discussion）；已有 Change 的下一 runnable stage；新 QUEUED Change；一次性 exploration。
+讨论必须先接受为 QUEUED，在下个执行边界运行，不能因 active Change 被拒绝。涉及同一 Option 的破坏性替代仍须满足生命周期前置条件。
 
 ## 10. Role card 与 capability registry
 
@@ -456,7 +377,7 @@ option.lineage.direct
 claim.related
 artifact.metadata
 artifact.content
-test.result
+ci.result
 review.findings
 ledger.resource
 repository.snapshot
@@ -471,6 +392,15 @@ Core 构造 `context/` 时，只能 materialize role card 明确列出的 channe
 v0 capability 名称是 closed enum；role card 出现未知 capability 直接 schema-invalid，不得“保留但忽略”：
 
 ```text
+task.revise
+change.promote
+change.pause
+change.resume
+change.abort
+change.retry-ci
+change.retry-review
+change.rework
+ci.run
 task.create
 task.extend
 task.suspend
@@ -503,6 +433,9 @@ process.execute
 
 固定授权矩阵：
 
+- Task revise -> `task.revise`
+- Change host action -> matching `change.<action>` capability
+- Independent CI run -> `ci.run`
 - Task create -> `task.create`
 - Task extend -> `task.extend`
 - Task suspend -> `task.suspend`
@@ -665,7 +598,7 @@ Claim subject 必须存在且属于当前 Task 可见范围；否则该 Claim re
 
 `claims`、`new_options` 必须存在，可为空数组。`new_options` 只有 actor 有 `option.propose` 时才生效；Core 创建 ID/provenance。若当前 Attempt 有 semantic-anchor Option，新 Option 的 semantic lineage parent 与 resource parent 都是该 anchor；初始 allocation=0。Task-level mutation 无 anchor 时 resource parent=Task root。
 
-result 缺失或整个 schema invalid：固定按 `DROP_FINAL` 处理，不创建 claims/options；writable workspace 仍照常 capture Artifact。
+result 缺失或整个 schema invalid：不创建 claims/options；writable workspace 仍尽可能 capture Artifact，Change BLOCKED / INVALID_AGENT_OUTPUT，不自动继续。
 
 ### 14.2 review
 
@@ -681,7 +614,7 @@ result 缺失或整个 schema invalid：固定按 `DROP_FINAL` 处理，不创�
 
 review Attempt 必须由具有 `review.decide` 的 actor 执行，否则整个 result invalid。findings 由 Core 记录为 reviewer provenance 的 finding Claims/events；额外 `claims` 仍要求 `claim.publish`。
 
-result 缺失/invalid/unauthorized：固定产生**conservative synthetic REJECT operation result**，不产生 reviewer approval Claim，不 promotion。该 synthetic reject 只阻止扩大 effect，不得被解释为 Artifact 语义为假。
+result 缺失/invalid/unauthorized：保留 Attempt/evidence，Change BLOCKED，不伪造 REJECT 或 APPROVE，不自动 rework 或 promotion。
 
 ### 14.3 option_generation
 
@@ -742,7 +675,7 @@ informational discussion.reply on the target Option, with Core-bound Attempt iss
 and created_against. Invalid/crash/timeout/interrupt creates no reply and ends the
 request without retry; the human comment remains. No Artifact, Option changes,
 resource transfers or mutation follows. Infrastructure blockers preserve the exact
-pending step for explicit repair/resolve, as for other operations.
+Change stage and target for explicit repair/resolve, as for other operations.
 
 ## 15. WSL Runner
 
@@ -791,18 +724,9 @@ Worker 退出不等于 Option complete、Task complete、Artifact approved。
 
 ## 17. Interrupt
 
-scp attempt interrupt 必须：
-
-1. mark interrupt requested
-2. revoke current Attempt lease logically
-3. wsl --terminate SCP-Worker
-4. restart distro only for workspace capture
-5. capture writable workspace Artifact
-6. mark Attempt INTERRUPTED
-7. charge consumed/full uncertain resource
-8. release mutation chain
-
-interrupted Option 保持 OPEN。默认 disposition = DROP_FINAL。不得自动从 interrupted Artifact continuation。
+`attempt interrupt` 只停止当前 agent invocation。终止 worker 及后代、尽可能捕获 writable workspace、settle lease 后将 Attempt 标为 INTERRUPTED。
+若 Attempt 属于 Change：保留 stage，将 Change 置 PAUSED，捕获 Artifact 成为 current_artifact_id。不得删除 Change，不需要再次 release。
+无 Change 的 discussion/exploration 只结束该请求。只有显式 change abort 才永久废弃 Change；所有 evidence 保留。
 
 ## 18. Artifact 实现
 
@@ -824,13 +748,13 @@ CONTINUE_FINAL：Artifact Pn -> 下一次 Attempt -> 解包到新的 workspace�
 
 Reviewer 输入 Artifact 时解包 disposable copy，并将文件权限设为只读。Reviewer 的任何写入失败。即使 reviewer 成功创建其他临时文件，也不得进入 Artifact store。review 永远不生成 workspace Artifact。
 
-## 21. Protected Test Runner
+## 21. CI Run
 
-Test Runner 不是 worker plugin。`scp.json.protected_test` 指定固定 command、timeout_ms、output_limit_bytes。候选 workspace 不得修改这些值。
-
-Protected Test Runner 固定在 dedicated `SCP-Worker` WSL2 distro 中执行，但**不是 worker profile/Attempt**：Core 将 Artifact 解包到 fresh disposable **writable** test copy（允许编译器/测试写 build/temp 输出），从 copy root 启动固定 command，capture stdout/stderr/exit/timeout，随后无条件丢弃整个 test copy。test copy 的任何变化不得进入 Artifact store 或 Promotion。
-
-Protected test 占用 global execution slot，并直接从 Artifact semantic-anchor Option 的 wall budget reserve/charge；可用 test lease = min(Option remaining, configured test timeout)。不得相信候选文件中的 runner config、resource config、timeout config。timeout/runner failure 不得被解释为 test PASS。
+CI 是对确定 Artifact 的机械验证，不是 Attempt，不需要 actor/role card，不产生 Claim、语义输出或 Artifact，也无 promotion authority。
+CIRun 持久保存 id、nullable change_id、artifact_id、status、started_at/ended_at、nullable exit_code、stdout_path/stderr_path、lease_wall_ms、elapsed_wall_ms、effective_timeout_ms、effective_command、effective_config_hash、stdout_truncated/stderr_truncated。
+status 为 QUEUED、PREPARING、RUNNING、PASS、FAIL、TIMEOUT、TERMINATED；每次重跑生成新的记录，历史不可覆盖。
+CI 在独立 SCP-Test 环境使用 Artifact 的可丢弃 writable copy，测试输出不得混入提交。日志按既有 bounds 截断并持续落盘。CI 与 agent 共用单槽，各自 lease 独立结算。
+`ci run ARTIFACT_ID` 只排队独立验证，不调用 builder。正常 FAIL/TIMEOUT 不代表基础设施故障。连续第二次同 Change TIMEOUT -> BLOCKED / REPEATED_CI_TIMEOUT，不再自动创建 reviewer/rework；非 TIMEOUT 打断 streak。显式 resume/retry-ci/rework 可重启恢复区间，历史 evidence 与 streak 不删除。
 
 ## 22. Git 的唯一职责
 
@@ -896,35 +820,17 @@ Archive 的非 tree attribute 来源必须被隔离：不得使用 `--worktree-a
 
 synthetic `.git` 永不进入 Artifact：Artifact capture 必须排除 workspace 根的 `.git` directory。Promotion 永远根据 Artifact files + authoritative base 构造新 commit，绝不采用 worker commit/object database。
 
-## 27. Promotion
+## 27. Promotion authority
 
-Promotion 必须从 Artifact 构造 authoritative commit。禁止 worker 自己的 commit 被直接采用。
-
-流程：
-
-1. base = Artifact.base_repo_sha
-2. assert target ref == base
-3. extract Artifact into bounded Windows temp tree
-4. create temporary Git index
-5. git read-tree base
-6. GIT_INDEX_FILE=<temp>, GIT_WORK_TREE=<artifact-tree>, git add -A
-7. git write-tree
-8. git commit-tree <tree> -p <base>
-9. git update-ref <target> <new> <base>
-
-最后一步必须是 CAS。
-
-如果 target 已经不是 base：promotion abort，记录该 promotion operation 为 `PRECONDITION_CHANGED`；保留 Artifact，Option/Task semantic status 不因此改变，不创建 infrastructure blocker。不得 merge、rebase、force push、automatic conflict resolution。
+`option release` 只授予开发 authority。CI PASS + 当前 reviewer APPROVE -> Change.stage=AWAIT_PROMOTION，authoritative repository 不变。
+`change promote CHANGE_ID` 需要 host operator 的 `change.promote`，且 Change 处于 AWAIT_PROMOTION/QUEUED、current Artifact 的 CI PASS、current review APPROVE 并针对该次 CI。事务只将 stage/state 改为 PROMOTION/QUEUED；Git construction/CAS 仍由 scheduler 单槽执行。
+执行前确认 authoritative ref == Change.base_repo_sha。不同则 Change=STALE；保留 Artifact，不写 authoritative branch，不 merge/rebase/force，也不重新开发。
+复用原有 bounded Git construction、prepared journal 与 CAS。成功后 journal=APPLIED，Task SHA 更新，Change=DONE。Promotion 不自动 close Option。
 
 ## 28. Promotion journal
 
-SQLite 增加内部运行表 repo_update_journal：id、task_id、artifact_id、target_ref、old_sha、new_sha、state(PREPARED/APPLIED/CONFLICT)、created_at。
-
-它是内部 recovery journal，不是新的 semantic object。
-
-流程：DB PREPARED -> git update-ref CAS -> DB APPLIED。
-
-Core crash 后：target == new_sha -> mark APPLIED；target == old_sha -> retry CAS；otherwise -> mark CONFLICT。
+repo_update_journal 记录 id、Task、Artifact、ref、old_sha、new_sha、PREPARED/APPLIED/CONFLICT/NOT_APPLIED 与时间。
+构造候选 commit 后先持久 PREPARED，再 CAS，再记录 APPLIED。恢复时只核对 ref：等于 new_sha 则确认 DONE；等于 old_sha 则 NOT_APPLIED，回到 AWAIT_PROMOTION，要求再次显式 promote；其他值则 STALE/CONFLICT。不因重启自动补做 CAS。
 
 ## 29. Git 调用必须有界
 
@@ -960,9 +866,9 @@ Create：检查 operator actor 有 `task.create`、objective/repo/ref/responsibl
 
 Extend：检查 actor 有 `task.extend`、Task 为 ACTIVE 或 SUSPENDED、amount > 0；exactly mint amount 到 Task root。CLOSED Task 不可 extend/reopen。
 
-Suspend：检查 actor 有 `task.suspend`；若当前 Task 占有 execution slot，则请求 interrupt/cancel 并等待 chain 机械终止；preserve Artifact/history；freeze resource accounts；release repository binding；Task -> SUSPENDED。Suspend 不改写旧 Option/Claim/Artifact 的 `created_against`。
+Suspend：检查 actor 有 `task.suspend`；请求停止当前 activity，所有非 terminal Change -> PAUSED；capture/settlement 后释放 repository binding；Task -> SUSPENDED。Suspend 不改写旧 Option/Claim/Artifact 的 `created_against`。
 
-Resume：检查 actor 有 `task.resume`、Task=SUSPENDED、repository free；resolve 当前 repo SHA；rebind repo；Task -> ACTIVE；更新 Task 的 current authoritative SHA，但不得修改历史 `created_against`。
+Resume：检查 actor 有 `task.resume`、Task=SUSPENDED、repository free；resolve 当前 repo SHA；rebind repo；Task -> ACTIVE；更新 Task 的 current authoritative SHA，但不得修改历史 `created_against`。非 terminal Change 若 base_repo_sha 不等于新 SHA 则 STALE，否则保留 PAUSED，等待显式 change resume。
 
 Close：检查 actor 有 `task.complete`。该操作等价于由该 actor 创建一个 subject=Task、claim_type=`fulfilled` 的 qualifying Claim，然后：若有 active chain 先按 interrupt/cancel 规则机械终止并 settle 所有 outstanding lease；disable descendant Options；在一个 SQLite transaction 中计算该 Task **所有 resource account 的 remaining 总和 R**，把这些 account 的 remaining 全部置 0，并执行 `retired_wall_ms += R`；release repo binding；Task -> CLOSED。CLOSED terminal，不可 resume。Task close 后第 8.2 节 conservation equation 仍必须精确成立，retired resource 永远不可恢复或再次分配。
 
@@ -984,31 +890,30 @@ worker result 中若有 Task `fulfilled` Claim：只有 issuer actor 有 `task.c
 
 `propose`：actor 需要 `option.propose`；创建 OPEN Option。若是 Task root proposal，resource parent=Task root；若显式从同 Task 的 source Option 派生，resource parent=source Option account，semantic edge relation=`propose`。初始 allocation=0。
 
-`refine`：actor 需要 `option.refine`；创建 OPEN child Option，semantic edge relation=`refine`，resource parent=parent Option account；资源按第 8.4 节 transfer；省略 --transfer-wall-ms 时为 0。旧 Option 保持原 status。
+`refine`：actor 需要 `option.refine`；创建 OPEN child Option，semantic edge relation=`refine`，resource parent=parent Option account；资源按第 8.4 节 transfer；省略 --transfer-wall-ms 时为 0。旧 Option 置 CLOSED/SUPERSEDED，保留历史。
 
 `split`：actor 需要 `option.split`；一次 transaction 创建 >=2 个 OPEN child Options，relation=`split`，按第 8.4 节分配真实余额；parent 不自动 close。
 
-`merge`：actor 需要 `option.merge`；输入 >=2 个 distinct OPEN participant Options，必须同 Task；创建一个 OPEN merged Option，所有 participant -> merged edge relation=`merge`；resource parent 与 transfer 规则见第 8.4 节。participants 不自动 close。
+`merge`：actor 需要 `option.merge`；输入 >=2 个 distinct OPEN participant Options，必须同 Task；创建一个 OPEN merged Option，所有 participant -> merged edge relation=`merge`；resource parent 与 transfer 规则见第 8.4 节。participants 置 CLOSED/SUPERSEDED；split parent 仍保持 OPEN。
 
-`allocate`：actor 需要 `option.allocate`；只允许从该 Option 的 immediate resource parent 向 Option account transfer positive `wall_ms`。若 parent 余额不足 whole operation fails。v0 不实现任意 sibling-to-sibling allocator；需要重分配时先通过 close/merge 等本文定义动作回收到 parent。
+`allocate`：actor 需要 `option.allocate`；沿已有 resource-parent path 在单一事务中补足并转移 positive `wall_ms`；不改变 parent relation，不 mint。Task root 向下转账后必须 >=1200000ms；仅此类 transfer 受限，Task 自身消费、退款、settlement 不受限。v0 不实现任意 sibling-to-sibling allocator；需要重分配时先通过 close/merge 等本文定义动作回收到 parent。
 
-`close`：actor 需要 `option.complete`。该操作等价于该 actor 发布 subject=Option、claim_type=`fulfilled` 的 qualifying Claim，然后 Option -> CLOSED，unused remaining 返回 immediate resource parent。CLOSED Option 不再 runnable，也不能 refine/split/allocate；历史与 lineage 保留。
+`close`：actor 需要 `option.complete`。显式 reason 区分 FULFILLED/SUPERSEDED/ABANDONED，CLI 默认 ABANDONED；只有 FULFILLED 产生 qualifying fulfilled Claim。Option -> CLOSED，unused remaining 返回 immediate resource parent。CLOSED Option 不再 runnable，也不能 refine/split/allocate；历史与 lineage 保留。
 
 worker result 的 Option `fulfilled` Claim 只有 issuer 同时有 `option.complete` 时触发相同 close；否则仅 informational。
 
 任何 operation 对 CLOSED input、跨 Task resource move、重复 participant、负数/溢出 wall_ms 都 fail closed，不进行部分修改。
 
-## 34. Review/rework
+## 34. Review / rework
 
-Mutation 返回 PROMOTE_FINAL 后：capture Artifact -> run protected tests -> run reviewer Attempt。
-
-Reviewer REJECT：Artifact Pn -> fresh mutation Attempt(target=Pn) -> Artifact Pn+1。
-
-必须创建新 Attempt、新 workspace、使用剩余 Option budget。不得 reopen Artifact；reviewer 不得直接 patch；reviewer 不得直接加测试；不得插入 Researcher 自动翻译 finding。
+PROMOTE_FINAL 表示提交验证：capture Artifact -> CI -> reviewer。其名称不授予仓库写权限。
+reviewer 必须得到当前 Artifact 的 CI evidence。`context/ci.result/result.json`、`stdout.log`、`stderr.log` 是实际可读内容，不能仅投影 Windows host path。result.json 包含截断标记、实际 timeout/command/config hash。
+有效 REJECT 且有 findings 可以进入 MUTATION 并以 current Artifact 为 target；rework context 包含 CI result/logs、review.findings、上一次 Artifact。无效、缺失、CRASHED review 不伪造 verdict，Change BLOCKED，不自动无证据循环。
+`change retry-ci` 对 current Artifact 新建 CI；`retry-review` 使用 current Artifact + 最新 CI evidence；`rework` 从 current Artifact 创建 mutation Attempt。均检查 Artifact 所属 Change。
 
 ## 35. Completion
 
-Promotion、protected test PASS、review APPROVE 都不等价于 Option 或 Task semantic completion。
+Promotion、CI PASS、review APPROVE 都不等价于 Option 或 Task semantic completion。
 
 普通 `fulfilled` Claim 默认只是信息。只有 issuer actor 持有对应 `option.complete` / `task.complete` capability 时才具有 qualifying completion effect，触发第 32/33 节固定 close 行为。
 
@@ -1022,7 +927,7 @@ CLI executable 固定名 `scp` / Windows `scp.exe`。全局语法：
 scp [--config PATH] [--json] <command> [args...]
 ```
 
-`--config` 缺省为当前目录 `scp.json`。**所有命令包括 `scp init` 都要求该配置存在且合法**；`scp init` 只根据配置创建/迁移 database、artifact store 和必要目录，不生成带隐式默认值的 `scp.json`。`--json` 只改变输出编码，不改变行为。
+`--config` 优先于 SCP_CONFIG，再回退当前目录 scp.json。help / --help / --version 无需配置；其余命令包括 `scp init` 要求配置存在且合法；`scp init` 只根据配置创建/迁移 database、artifact store 和必要目录，不生成带隐式默认值的 `scp.json`。`--json` 只改变输出编码，不改变行为。
 
 ### 36.1 Exit codes
 
@@ -1049,7 +954,7 @@ failure envelope：
 {"ok":false,"command":"task.create","error":{"code":"STABLE_CODE","message":"human text"}}
 ```
 
-`data` 不允许由各 command 自由设计；v0 使用下面冻结的 projection。所有 timestamp 必须是 UTC RFC3339 字符串；nullable 字段显式为 `null`，不得省略 required key。除下面列出的 key 外不得增加额外字段。
+`data` 不允许由各 command 自由设计；v0 使用下面冻结的 projection。所有时间为 UTC RFC3339。新增 Change/CIRun 与关联字段按第 4/21/37 节公开；暂无关联的 ID 可省略。
 
 #### 36.1.1 Stable error codes
 
@@ -1062,6 +967,7 @@ INVALID_CONFIG
 INVALID_JSON
 SCHEMA_INVALID
 NOT_FOUND
+AMBIGUOUS_ID
 CAPABILITY_DENIED
 PRECONDITION_FAILED
 INVALID_STATE
@@ -1076,7 +982,7 @@ CORE_INCONSISTENT
 BLOCKED
 ```
 
-message 只用于人读，不得被 Core 再解析为控制信号。Error code -> process exit code 固定映射：`INTERNAL_ERROR -> 1`；`USAGE_ERROR|INVALID_CONFIG|INVALID_JSON|SCHEMA_INVALID -> 2`；`NOT_FOUND|CAPABILITY_DENIED|PRECONDITION_FAILED|INVALID_STATE|INSUFFICIENT_RESOURCE|LIMIT_EXCEEDED|PRECONDITION_CHANGED -> 3`；`WORKER_UNAVAILABLE|RUNNER_UNAVAILABLE|REPOSITORY_UNAVAILABLE|BLOCKED -> 4`；`STORAGE_FAILURE|CORE_INCONSISTENT -> 5`。
+message 只用于人读，不得被 Core 再解析为控制信号。Error code -> process exit code 固定映射：`INTERNAL_ERROR -> 1`；`USAGE_ERROR|INVALID_CONFIG|INVALID_JSON|SCHEMA_INVALID -> 2`；`NOT_FOUND|AMBIGUOUS_ID|CAPABILITY_DENIED|PRECONDITION_FAILED|INVALID_STATE|INSUFFICIENT_RESOURCE|LIMIT_EXCEEDED|PRECONDITION_CHANGED -> 3`；`WORKER_UNAVAILABLE|RUNNER_UNAVAILABLE|REPOSITORY_UNAVAILABLE|BLOCKED -> 4`；`STORAGE_FAILURE|CORE_INCONSISTENT -> 5`。
 
 #### 36.1.2 Frozen JSON object projections
 
@@ -1084,7 +990,7 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 
 ```json
 {
-  "id":"...","objective":"...","repo_path":"...","repo_ref":"...",
+  "id":"...","objective":"...","objective_revision":0,"repo_path":"...","repo_ref":"...",
   "responsible_actor_id":"...","status":"ACTIVE|SUSPENDED|CLOSED",
   "current_authoritative_sha":"40-hex","state_revision":0,
   "resources":{"total_minted_wall_ms":0,"remaining_wall_ms":0,"outstanding_lease_wall_ms":0,"total_charged_wall_ms":0,"retired_wall_ms":0},
@@ -1099,6 +1005,7 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 ```json
 {
   "id":"...","task_id":"...","text":"...","status":"OPEN|CLOSED",
+  "close_reason":"FULFILLED|SUPERSEDED|ABANDONED (closed only)",
   "resource_parent_id":"...","remaining_wall_ms":0,
   "created_against_repo_sha":"40-hex","created_against_state_revision":0,
   "created_by_actor":"...","created_at":"RFC3339"
@@ -1112,7 +1019,8 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 ```json
 {
   "fail_stop":false,
-  "execution_slot":{"state":"IDLE|BUSY","owner_attempt_id":null},
+  "execution_slot":{"state":"IDLE|BUSY","owner_activity_id":null,"activity_kind":"mutation|review|discussion|ci|promotion|recovery"},
+  "executing_activity":null,"current_change":null,"changes":[],"queued_change_count":0,"attention_changes":[],
   "tasks":[],
   "running_attempt":null,
   "unresolved_blockers":[]
@@ -1123,8 +1031,8 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 
 #### 36.1.3 Command -> data mapping
 
-- `task create/extend/suspend/resume/close/show` -> `TaskJSON`；
-- `option show/propose/refine/merge/allocate/release/close` -> `OptionJSON`；
+- `task create/extend/revise/suspend/resume/close` -> `TaskJSON`；`task show` -> task + objective_revisions；
+- `option show/propose/refine/merge/allocate/close` -> `OptionJSON`；`option release` -> `ChangeJSON`；
 - `option comment` -> `ClaimJSON`；
 - `option discuss` -> `{"comment":ClaimJSON,"queued":true}`（success queued 必须 exactly true）；
 - `option thread` -> `{"option":OptionJSON,"messages":[ClaimJSON...]}`；
@@ -1136,11 +1044,11 @@ message 只用于人读，不得被 Core 再解析为控制信号。Error code -
 - `claim create` -> `ClaimJSON`；
 - `blocker resolve` -> `BlockerJSON`；
 - `status` -> `StatusJSON`；
-- `init` -> `{"schema_version":0,"database":"...","artifact_store":"..."}`；
+- `init` -> `{"schema_version":2,"database":"...","artifact_store":"..."}`；
 - `recover` -> `{"recovered_attempt_ids":["..."],"promotion_journal_reconciled":0,"stale_lock_removed":false}`；
 - `run --json` 在进程正常退出时只输出一次 `{"stop_reason":"SIGNAL|FAIL_STOP"}`；运行期间事件只写 stderr/log，不得向 stdout 流式输出多个 JSON object。
 
-所有 list 命令的 `items` 必须 deterministic（至少按 `created_at,id` 排序）。ID、status、amount 使用 JSON string/integer 原类型，不使用格式化字符串。
+所有 list 的 items 必须 deterministic。Option 默认先 OPEN 后历史 CLOSED，同组按 created_at/id；其他记录按时间/id。ID、status、amount 使用 JSON string/integer 原类型，不使用格式化字符串。
 
 ### 36.2 Commands
 
@@ -1151,6 +1059,24 @@ scp init
 scp run
 scp recover
 scp status
+scp --help
+scp help
+scp config show
+scp task revise TASK_ID --objective TEXT
+scp change list [--task TASK_ID] [--state STATE]
+scp change show CHANGE_ID
+scp change watch CHANGE_ID
+scp change pause CHANGE_ID
+scp change resume CHANGE_ID
+scp change abort CHANGE_ID
+scp change promote CHANGE_ID
+scp change retry-ci CHANGE_ID
+scp change retry-review CHANGE_ID
+scp change rework CHANGE_ID
+scp ci list [--task TASK_ID] [--change CHANGE_ID]
+scp ci show CI_RUN_ID
+scp ci watch CI_RUN_ID
+scp ci run ARTIFACT_ID
 
 scp task create --objective TEXT --repo PATH --ref REF --responsible-actor ID --wall-ms N
 scp task extend TASK_ID --wall-ms N
@@ -1170,7 +1096,7 @@ scp option release OPTION_ID
 scp option comment OPTION_ID --text TEXT
 scp option discuss OPTION_ID --text TEXT
 scp option thread OPTION_ID
-scp option close OPTION_ID
+scp option close OPTION_ID [--reason FULFILLED|SUPERSEDED|ABANDONED]
 
 scp attempt list [--task TASK_ID]
 scp attempt show ATTEMPT_ID
@@ -1213,89 +1139,43 @@ scp blocker resolve BLOCKER_ID
 
 `claim create --payload FILE`：FILE 内容必须为 JSON object；省略时 payload=`{}`。CLI operator actor 由 config 的 `operator_actor_card` 固定，命令不得通过 `--actor` 自选 identity。`claim create` 需要 `claim.publish`；若 type=`fulfilled` 且 operator 还具有对应 `option.complete`/`task.complete`，则在同一 Core transaction 中执行 qualifying close；否则仅保存 informational Claim。
 
-`scp status` 必须至少输出：global fail-stop state、execution slot owner/idle、ACTIVE/SUSPENDED Task 概览、current RUNNING Attempt、unresolved blockers；human mode 中 unresolved blocker 必须显眼。
+`status` 还包含 current executing activity、Change stage/state、QUEUED 数量及 PAUSED/BLOCKED/STALE attention。change show/watch 按时间串联 Attempts、Artifacts、CI、review/rework、promotion wait/result。所有 ID 支持唯一前缀，无匹配 NOT_FOUND、多匹配 AMBIGUOUS_ID。所有 flag/value validation 必须在数据库/文件系统副作用前完成。所有 command group 支持 --help，说明用途、参数与 authority/repository effects。
 
 所有 list 命令必须 deterministic（至少按 `created_at,id` 排序），不得依赖 SQLite 未定义 row order。
 
-## 37. Scheduler mechanical state machine
+## 37. Change 生命周期与调度
 
-`scp run`：acquire scheduler lock；循环 recover/verify no dangling Attempt；derive next runnable operation from persistent Core state；execute exactly one mechanical step/chain；repeat。v0 不存在 model-decided workflow planning。
+Change 持久保存 id、task_id、option_id、base_repo_sha、current_artifact_id、current_ci_run_id、current_review_attempt_id、stage、state、created_at/updated_at，以及 objective 快照、attention reason 和 timeout streak。
+固定 stage：MUTATION / CI / REVIEW / AWAIT_PROMOTION / PROMOTION。
+固定 state：QUEUED / RUNNING / PAUSED / BLOCKED / STALE / DONE / ABORTED。只有 DONE/ABORTED terminal。
 
-Scheduler lock 使用 atomic creation of `run.lock` directory。正常退出删除。发现 stale lock：拒绝启动并提示运行 `scp recover`。不要设计 distributed lock。
+| 事件 | Change 后继 |
+| --- | --- |
+| 显式 option release | MUTATION/QUEUED，base=Task 当前 authoritative SHA |
+| CONTINUE_FINAL + Artifact | MUTATION/QUEUED，target=该 Artifact |
+| PROMOTE_FINAL + Artifact | CI/QUEUED |
+| DROP_FINAL / invalid output / ordinary crash / agent timeout | 原 stage/BLOCKED，保留可捕获 Artifact |
+| interrupt / pause / scheduler 正常停止 | 原 stage/PAUSED，settle，保留 Artifact |
+| CI PASS/FAIL/第一次 TIMEOUT | REVIEW/QUEUED |
+| 同 Change 连续第二次 TIMEOUT | CI/BLOCKED，REPEATED_CI_TIMEOUT |
+| CI PASS + review APPROVE | AWAIT_PROMOTION/QUEUED |
+| 有 findings 的有效 REJECT | MUTATION/QUEUED，target=current Artifact |
+| 显式 change promote | PROMOTION/QUEUED |
+| CAS 成功 | PROMOTION/DONE |
+| base SHA 改变 | 原 stage/STALE |
+| 无资源 | 原 stage/BLOCKED，INSUFFICIENT_RESOURCE |
+| 显式 abort | 原 stage/ABORTED，保留历史 |
 
-### 37.1 Runnable definition and precedence
-
-某个 operation runnable 当且仅当：其 Task=ACTIVE；相关 Option（如有）=OPEN；所需 resource anchor 有足够 positive balance 形成本步 lease；相关 scope 无 unresolved blocker；global fail-stop=false；required authoritative resource/precondition 当前满足。Option mutation 需要既有 Pending 且 Option account 有余额；discussion 使用 Task root，允许 Option allocation=0。仅 funded 不产生 Pending。
-
-全局只允许一个 execution slot。选择优先级固定为：
-
-1. 已存在且可执行的 Pending chain/discussion next step（包括 host release 创建的 initial mutation）；
-2. ACTIVE Task 的一次性 initial exploration；
-3. idle。
-
-不得扫描 OPEN/funded Options 并构造 mutation。No Option can start a mutation chain without explicit host option.release.
-
-若 pending next step 只因余额不足或 unresolved scoped blocker 暂时不可执行，release execution slot，但保留该 pending step；allocation 增加或 blocker 显式 resolve 后，从**同一个 next step/Artifact target**继续，不得悄悄改成新的 authoritative-state mutation。Task suspend/close 则取消该 Task 的 pending chain，历史 Artifact/Claim 保留。
-
-### 37.2 One-time initial exploration
-
-每个新 Task 在 create transaction 中记录一次 `initial_exploration_pending` 内部 runtime state（它不是 semantic object）。第一次 `scp run` 调度该 Task 时：
-
-1. 读取 `scp.json.exploration.initial_option_generation_attempts = N`，顺序执行 exactly `N` 个 **fresh** `option_generation` Attempts，全部 resource anchor=Task root；v0 全局串行意味着它们不并发；
-2. 每个合法 result 的 options 追加到同一个 raw Option batch B；某次 invalid/crash/timeout 只贡献 0 个 Option，该次已消费且不自动重试；
-3. N 次全部结束后，若 `|B| >= 2`，exactly one `merge_judge` 对整个 B 分组；invalid partition -> dedup chain 结束，raw B 保留；
-4. 对 verified partition，按 MergeJudge 输出 group 顺序处理：size=1 的 group 直接以该 raw Option 作为 canonical working option，不调用 MergeSynth；size>=2 的 group exactly one `merge_synth`，按第 14.5 节创建 zero-allocation merged Option；单个 synth invalid 只影响该 group；
-5. initial exploration 完成后该 marker 永久结束，不因重启再次运行。`N` 只决定独立 fresh generation Attempt 次数，不 mint 资源；每次 Attempt 都受 Task root 余额和 role-card lease limit 约束。
-
-CLI `option propose` 创建的后续人工 Option **不会自动重新触发全 Task dedup**；v0 不提供持续后台 dedup。它们是 inert candidates；allocation 后仍需 host option release。
-
-Initial exploration/dedup 不自动分配 Option budget。完成后 scheduler idle/sleep，无论 Option 是否 funded；等待 operator `option release` 或 `option discuss` 创建 Pending。
-
-### 37.3 Mutation/review/promotion transition table
-
-下表是 normative；不得自行插入 planner/workflow node：
-
-| Current condition / result | Mechanical next step | Chain semantics |
-| --- | --- | --- |
-| explicit host option release succeeds, no pending chain | `mutation(target=Option, base=current authoritative SHA)` | start chain |
-| mutation returns `CONTINUE_FINAL` | capture Artifact A -> next `mutation(target=A)` | retain chain; fresh workspace from A |
-| mutation returns `PROMOTE_FINAL` | capture Artifact A -> protected test(A) | retain chain |
-| mutation returns `DROP_FINAL`, missing/invalid result, ordinary CRASHED/TIMED_OUT/INTERRUPTED | capture writable Artifact if possible -> no next step | end chain; Option remains OPEN; no automatic retry; another cycle requires host option release |
-| protected test completes normally, exit=0 | reviewer(A, test=PASS) | retain chain |
-| protected test completes normally with nonzero exit or test timeout | reviewer(A, test=FAIL/TIMEOUT) | retain chain; Artifact is mechanically non-promotable in this cycle |
-| protected test runner infrastructure failure | create blocker per §38A | preserve pending test/review chain; release slot until explicit resolve |
-| review result invalid | treat as `REJECT` | same as reject |
-| reviewer `REJECT` | fresh `mutation(target=A)` rework | retain chain; rejection/findings supplied as facts |
-| reviewer `APPROVE` and protected test=PASS | promotion(A) | retain chain |
-| reviewer `APPROVE` but protected test!=PASS | fresh `mutation(target=A)` rework | effective mechanical reject reason=`PROTECTED_TEST_FAILED`; reviewer approval cannot override protected runner failure |
-| promotion CAS succeeds | update journal/APPLIED; Task authoritative SHA=new SHA | end chain; Option remains OPEN; Pending deleted; idle until another explicit release; promotion != completion |
-| promotion precondition changed | record `PRECONDITION_CHANGED`; no repo write | end chain; Option OPEN; another explicit release required; future work uses current authoritative state |
-| any next step lacks enough resource | no execution | release slot; retain exact pending step until explicit allocation/extend or Task suspend/close |
-| scoped infrastructure blocker during worker/review/promotion | record blocker | release slot; retain exact pending step until explicit resolve unless Task suspended/closed |
-
-A reviewer is always given the protected test result. Normal test failure is **not** an infrastructure blocker. Promotion requires the conjunction `protected_test == PASS && review == APPROVE && CAS precondition holds`.
-
-After successful promotion, Pending is deleted. Option remains OPEN and funded but idle; another mutation cycle requires a new explicit host `option release`. Review APPROVE only authorizes promotion of the current Artifact.
-
-### 37.4 Chain cancellation
-
-`task suspend` / `task close` 按第 32 节取消该 Task 的 active or pending chain。`attempt interrupt` 只终止当前 Attempt，并按默认 DROP semantics 结束当前 chain step；它不 close Option。取消/interrupt 不能删除已捕获 Artifact 或改写 Claims/created_against。
+同一 Option 只能有一个非 terminal Change；不同 Option 可随时 release 排队。allocation 不产生 Change，也不解除 PAUSED/BLOCKED/STALE。
+`resume` 只恢复原 PAUSED/BLOCKED Change，已有 Artifact 的 MUTATION 必须从它解包。STALE 不可自动移植；可显式 abort 后另行 release 新工作。
+Pending 仅是当前选中 activity 的派生 runtime 记录，活动结束即清除。调度、重启、继续开发均以 Change 为生命周期 authority。
+一次性 exploration 仍由 Task runtime marker 记录次数、原始 proposals、partition 与 synthesis；不分配预算、不 release。源码调查使用 readonly snapshot / repository.read，不能从 workspace=none 声称完成源码调查。
 
 ## 38. Crash recovery
 
-scp recover 固定执行：
-
-1. terminate SCP-Worker distro
-2. inspect DB for non-terminal Attempt
-3. if writable workspace exists: capture Artifact
-4. mark Attempt CRASHED
-5. conservatively charge full outstanding lease
-6. inspect repo_update_journal
-7. reconcile Git refs
-8. clean temporary files
-9. remove stale run.lock
-
-不得猜测 worker 是否“其实已经完成”。
+先验证 scheduler/control owner 已退出；占有 global execution slot，终止两个 execution environments；捕获未结算 mutation workspace 并关联原 Change；Attempt=CRASHED，CI=TERMINATED，uncertain lease 收取全额；Change 原 stage/PAUSED。已保存 Artifact、CI logs、Claims 不删除。
+只读核对 promotion journal（第 28 节），清理临时 workspace/transfer，保留输入和日志，清除确认死亡的 run.lock 和已结算取消标记。
+正常停止/重启保留 Change 位置，不创建新 Change，不自动 promotion。
 
 ## 38A. 基础设施失败、阻塞与状态冲突
 
@@ -1427,7 +1307,11 @@ wrapper/executable 若知道自身基础设施不可用，可使用 reserved exi
 
 所有递归扫描必须有 max file count、max total bytes、max single file size、max path length。这些值来自 scp.json。生产配置不得依赖代码里的隐式 unlimited default。越界时 operation fails closed。
 
-## 41. 配置文件：scp.json / scp.example.json
+## 41. 配置生命周期
+
+scheduler 启动时冻结 effective config；不做热加载。config show 显示 config_path、disk_config_hash、scheduler_effective_config_hash、scheduler_started_at、restart_required。磁盘变化不影响当前 scheduler；重启后新 activity 使用新配置。CI Run 保存实际配置 provenance。配置 schema_version 仍为 0；开发数据库 schema_version=2，拒绝原 v0 数据库，不自动迁移生产数据。
+
+### 配置文件：scp.json / scp.example.json
 
 `scp.example.json` 必须完整展示 v0 schema；生产 `scp.json` 使用相同 schema。unknown top-level/nested field 一律拒绝，防止拼写错误被静默忽略。
 
@@ -1465,7 +1349,7 @@ wrapper/executable 若知道自身基础设施不可用，可使用 reserved exi
     "git_export_max_bytes": 134217728,
     "external_process_timeout_ms": 60000
   },
-  "protected_test": {
+  "ci": {
     "command": [
       "go",
       "test",
@@ -1553,7 +1437,7 @@ Normative validation：
 - unavailable exit code 必须 1..255，且同 profile 内唯一；
 - `operation_profiles` 必须恰好包含上面六个 operation key，并引用存在的 worker；
 - mutation profile 必须 writable；review/discussion profile 必须 readonly；discussion synthetic_git 必须 false；merge/option generation profile 必须 none；
-- protected test command 非空且 timeout/output limit >0。
+- CI command 非空且 timeout/output limit >0。
 
 示例中的具体 limit 数值不是产品默认值；生产配置必须显式包含它们。Core 不提供隐式 unlimited/default budget。
 
@@ -1606,7 +1490,7 @@ R1b regression：确定性交错覆盖 suspend 与 `option close`、suspend 与 
 
 Role-card tests：`scp_harness_role_card_v0.schema.json` valid fixtures 全通过；unknown context/capability/limit、wrong scope、duplicate capability name、missing `lease.wall_ms` 全拒绝；改变 `influence` 不得改变 v0 Core decision。
 
-Scheduler transition tests：第 37.3 表每一行至少一个测试；尤其 test FAIL + reviewer APPROVE 仍不得 promotion、resource/blocker pause 后从同一 pending step 恢复、promotion 后 Option 保持 OPEN。
+Scheduler transition tests：第 37 节转换表每一行至少一个测试；尤其 test FAIL + reviewer APPROVE 仍不得 promotion、resource/blocker pause 后从原 Change stage/Artifact 恢复、promotion 后 Option 保持 OPEN。
 
 CLI JSON golden tests：第 36.1 冻结 projection/command mapping 与 stable error code 全覆盖；unknown output field 视为实现 bug。
 
@@ -1641,81 +1525,10 @@ go vet ./...
 
 如果普通云 CI 无法提供 WSL2，可以把 WSL acceptance 标记为“not run in this CI environment”，但这不等于 Final Acceptance；最终交付前必须在目标 host 实跑。
 
-## 46. 推荐 implementation milestones 与 Final Acceptance Cases
+## 46. v0.2 验收矩阵
 
-本节只帮助 autonomous implementer 分解问题。**不是 Gate，不要求顺序，不要求中间 commit，不允许因为某个 Acceptance Case 暂时失败就停止整个 bootstrap。**
-
-### Phase 0 — 环境与风险 spike
-
-建议尽早验证：
-1. Go Windows executable 能启动 `wsl -d SCP-Worker -- <fake worker>`；
-2. 能把文件 stream 到 WSL；
-3. 能从 WSL stream 文件回来；
-4. `wsl --terminate SCP-Worker` 能杀掉 child/grandchild；
-5. Windows Git rev-parse/archive/update-ref CAS 在 test repo 正常工作；
-6. 10000 commit test repo 中 Git export 不进行历史业务查询。
-
-**Acceptance A0**：上述全部最终自动化测试通过。
-
-### Phase 1 — Skeleton + SQLite
-
-建议实现 config、schema migration、Task、Option、Claim、Artifact metadata、Attempt、resource account、audit log、SQLite transactions。ID 使用 `crypto/rand` 128-bit hex，不增加 UUID dependency。
-
-**Acceptance A1**：`scp init / task create / task show` 工作，进程重启后数据正确，strict config/schema 生效。
-
-### Phase 2 — Generic worker execution
-
-建议实现 WorkerProfile、input/result strict schemas、bounded stdout/stderr、timeout、WSL execution。使用 fake workers，不接真实 provider protocol。
-
-**Acceptance A2**：全部 fake worker lifecycle/result-schema/capability tests 通过。
-
-### Phase 3 — Artifact
-
-建议实现 workspace materialization、capture、tar、SHA-256、atomic publish、continuation。
-
-**Acceptance A3**：base files -> worker edits -> worker crash -> Artifact captured -> fresh workspace restored；Artifact immutable。
-
-### Phase 4 — Bounded Git
-
-建议只实现 resolve_ref、export_tree、promote、synthetic one-commit worker repo，并加入 forbidden Git architecture tests。
-
-**Acceptance A4**：10000 commit authoritative repo 的 Attempt startup Core Git subprocess count 与 1 commit repo 相同；worker synthetic history 长度 exactly 1；worker 可在 synthetic repo 自行使用普通 Git 而看不到 authoritative history。
-
-### Phase 5 — Ledger + Option lifecycle
-
-建议实现 create/extend/allocation/refine/split/merge/close/lease/refund 和 property tests。
-
-**Acceptance A5**：大量随机操作中 conservation equation 始终成立，无负余额、无非 create/extend mint、无丢失预算；merge LCA/explicit transfer 与 rollback 行为精确满足第 8 节。
-
-### Phase 6 — Scheduler
-
-实现 global execution slot、Pending-first deterministic scheduling、runnable check、resource lease、worker execution。
-
-**Acceptance A6**：多个 Option 可连续自动执行；任意时刻 execution activity <=1；interrupt 可 out-of-band 终止当前 Attempt，但下一 activity 必须等待 slot release。
-
-### Phase 7 — Mutation / Test / Review / Promotion
-
-建议完成 Option -> mutation -> Artifact -> protected test -> reviewer -> reject/rework 或 approve -> promotion，以及 promotion journal/recovery。
-
-**Acceptance A7**：至少两个 E2E：A mutation -> approve -> promote；B mutation -> reject -> fresh rework -> approve -> promote；invalid review 必须保守阻止 promotion。
-
-### Phase 8 — Option generation / dedup
-
-建议实现 raw proposal、MergeJudge、partition validation、MergeSynth、merged Option。
-
-**Acceptance A8**：duplicate ID、missing ID、unknown ID、cross-Task ID 全部导致 partition 被 Core 拒绝；Raw Options 永远仍可读取；merged Option 初始不凭空获得 budget。
-
-### Phase 9 — Suspend / Resume / Interrupt / Recovery
-
-建议实现 interrupt、Task suspend/resume/close、scheduler crash recovery、promotion crash recovery。
-
-**Acceptance A9**：T1 active -> worker running -> interrupt -> T1 suspend -> T2 bind/run/close -> T1 resume；旧 history/created_against 不重写，资源无 mint/loss。
-
-### Phase 10 — Frozen walkthrough
-
-按照 `scp_harness_v0_walkthrough.md` 的 frozen Vorton fixture 完整模拟。该 fixture 的 symbolic IDs、fake-worker result sequence、resource transfers、repo checkpoints、interrupt/suspend/resume 顺序和最终 ledger equations 都是 normative；实现者只能决定测试 harness 如何驱动它，不能改 scenario 让实现更容易通过。
-
-**Acceptance A10**：fixture 全自动 integration test 逐 checkpoint 通过，且过程中所有前述 invariant/architecture checks 同时保持。真实 wall-clock charge 可以由运行时测得，但必须满足 fixture 中冻结的等式/上下界；不得用硬编码假 charge 绕过 production metering。
+必须覆盖裁决 A–M：独立 promotion capability、运行中 interrupt/capture/resume、scheduler restart、Task suspend 同 SHA/变 SHA、独立 CI 不增加 Attempt、实际日志投影、重复 TIMEOUT 熔断、转账保底与正常消费、discussion 排队与单槽、多 Change stale、配置冻结和 provenance、help/短 ID/提前参数校验、SUPERSEDED。
+状态机还必须覆盖资源不足、capability denial、非法操作；保留既有资源守恒、不可变 Artifact、Git CAS、WSL 隔离、进程后代终止、Crash recovery、真实 Codex integration 检查。不得 skip、删除有效测试、放宽 invariant 或单纯增加 timeout。
 
 ## 47. 最终实现禁止行为
 
@@ -1783,7 +1596,7 @@ Final DoD 是 conjunctive：下面每一项都必须成立。任何一项未满�
 - 没有未声明的 provider/dependency/package/parallelism。
 
 ### Core
-- 五种 semantic object 正常持久化。
+- Task/Option/Claim/Artifact/Attempt/Change 与 CIRun 正常持久化，Attempt 严格表示 agent invocation。
 - Attempt 仍为薄 runtime record。
 - Task/Option lifecycle 工作。
 - capability 正确应用。
@@ -1822,15 +1635,15 @@ Final DoD 是 conjunctive：下面每一项都必须成立。任何一项未满�
 ### Review
 - reviewer 无法修改 submitted Artifact。
 - reject 生成 fresh Attempt。
-- protected tests 不能被 candidate 改 runner policy。
+- CIs 不能被 candidate 改 runner policy。
 
 ### Runtime
 - global execution activity 永远 <= 1；interrupt 仅作为 out-of-band control。
 - Scheduler next-step 行为逐项满足第 37.3 transition table；test failure 不可被 reviewer approval 绕过。
-- resource/blocker pause 后只从冻结的 pending step 恢复，不可静默换 target。
+- resource/blocker pause 后只从原 Change/current Artifact 恢复，不可静默换 target。
 - WSL distro 可强制 terminate。
 - Core crash 可以 recover。
-- pending promotion 可以 recover。
+- promotion journal 可只读 reconcile，未执行 CAS 回到 AWAIT_PROMOTION。
 - infrastructure blocker 不自动 retry。
 - WORKER_UNAVAILABLE/RUNNER_UNAVAILABLE/REPOSITORY_UNAVAILABLE 会持久阻塞对应 scope 并上报 O5/operator。
 - STORAGE_FAILURE/CORE_INCONSISTENT 会触发 global fail-stop。
@@ -1903,84 +1716,15 @@ Known normative failures: none | list
 只有全部 required item 为 PASS 且 `Known normative failures: none` 时，最后一行才可以输出：
 
 ```text
-SCP Harness v0 implementation complete
+SCP Harness v0.2 remediation complete
 ```
 
 不得以“代码已经基本完成”“主要功能可用”作为交付标准。
 
-## 48. O5 amendment — human discussion and explicit Option release (2026-09-22)
+## Host discussion and release
 
-RESOURCE IS NOT AUTHORITY. No Option can start a mutation chain without explicit
-host option.release. Database schema_version remains 0. No released/approved/ready
-field, Release object, special release Claim, chat/session/thread object or second
-scheduler exists. RoundRobin may remain readable for compatibility but never
-influences initial mutation dispatch.
-
-`Core.ReleaseOption(id)` / `scp option release ID` requires option.release, existing
-OPEN Option, ACTIVE Task, completed initial exploration, positive Option remaining
-resource and no Task Pending/cancellation. Fail with NOT_FOUND, INVALID_STATE,
-INSUFFICIENT_RESOURCE, BLOCKED or CAPABILITY_DENIED without repairing state. Within
-one transaction, acquire the existing nonblocking Task control gate, revalidate,
-write Pending[task]={task_id,option_id:id,operation:mutation,target_type:OPTION,
-target_id:id}, audit OPTION_RELEASED and commit before unlocking. Never hold the
-gate waiting for a SQLite transaction. Release neither reserves the execution slot
-nor starts a worker. Only normal scp run consumes the queued step.
-
-One release authorizes the entire mutation/CONTINUE/test/review/reject/rework/
-promotion chain, including resource pauses and blocker repair. Promotion, DROP,
-invalid mutation, CRASHED, TIMED_OUT, INTERRUPTED and PRECONDITION_CHANGED end the
-chain by deleting Pending. Remaining budget does not authorize a retry. Recovery
-may resume existing valid Pending chains and reconcile runtime/journals, but must
-never infer authorization from balances, including pre-upgrade funded Options.
-
-All creation paths (propose, option_generation, mutation.new_options, refine,
-split, explicit merge, merge_synth) create inert candidates. Allocate only moves
-resource. Refine preserves immutable text by creating a child; omitted
---transfer-wall-ms means 0, parent balance/status unchanged, child balance 0.
-Explicit transfer retains ledger semantics. Refine/split/merge participants that
-belong to a Task's Pending chain return BLOCKED. Allocate may add resources to the
-active Option; close retains explicit cancellation synchronization.
-
-`option comment ID --text TEXT` requires claim.publish and creates an immutable
-informational discussion.comment with subject_type=OPTION, subject_id=ID and exact
-payload_json={"text":"non-empty text"}. Core binds issuer and current Task
-created_against. It takes no execution slot, moves no budget, creates no Pending,
-and works during execution. An already materialized Attempt need not see later
-comments. Generic Claims never create a release effect.
-
-`option thread ID` reads only discussion.comment/discussion.reply on that Option,
-ordered by created_at,id. Human output is `[time] issuer:` followed by message text;
-JSON uses the §36 projection. It creates no persistent thread object.
-
-`option discuss ID --text TEXT` requires option.discuss + claim.publish and the same
-Option/Task/exploration/no-Pending conditions as release, but requires positive
-Task-root resource, not Option allocation. Under the same Task control gate, one
-transaction creates the human comment and Pending(operation=discussion,target=
-OPTION ID,option_id=ID), audits OPTION_DISCUSSION_REQUESTED and commits. Failure
-rolls back both; it must not leave a misleading human comment. Mutation/test/review/
-promotion Pending blocks discuss. Plain comment remains available.
-
-Discussion uses the ordinary bounded worker path and global execution slot, with
-Anchor(discussion)=Task root, lease=min(root remaining, profile timeout, card lease).
-Profile is readonly with synthetic_git=false. Minimal card context: task.objective,
-task.state, option.target, option.lineage.direct, claim.related, ledger.resource.
-Capabilities: claim.publish, repository.read(scope=task.repository),
-process.execute(scope=lease.sandbox). The authoritative source snapshot is readonly;
-normal channel/capability checks still apply. No sandbox.write, release, allocate,
-task.*, review.decide or completion capability is assigned to discussion workers.
-
-Core supplies context/discussion-instruction.txt: answer the current human question
-with a reviewable conclusion, reasons summary, risks and recommendations; do not
-output hidden chain-of-thought or claim to have changed Option/code. Suggestions
-stay in the answer; O5 decides whether to refine. claim.related is sorted by
-created_at,id. Core is provider-opaque.
-
-O5/operator owns option.release and option.discuss. Ordinary worker cards do not
-own option.release. Worker results/new_options are strict and cannot carry release
-fields. Claims, review APPROVE, allocation and all creation paths cannot seed a new
-chain. The frozen walkthrough and Windows release selection include funded idle,
-human discussion, explicit release and idle after promotion, including real Codex
-workers under the existing YOLO/OS boundary.
+comment 写入 discussion.comment；discuss 原子写入 comment 并排队一次 readonly agent 请求，Task root 支付 lease。有效结果写 discussion.reply；无效结果结束该请求，不产生 Artifact 或 release authority。已有 Change 不阻止其排队。
+`option release` 只创建 Change，`change promote` 独立授权仓库写入；同一 Option 非 terminal Change 不能重复 release。worker 的 new_options、Claim、result 没有这些 host authority。
 
 ## O5 FINAL RULING — Live Attempt Observability (2026-09-22)
 
@@ -1988,7 +1732,7 @@ This amendment adds only `attempt watch ATTEMPT_ID` and `attempt diff ATTEMPT_ID
 RESOURCE IS NOT AUTHORITY. Both commands are observations: no execution slot,
 lease reservation/settlement, Pending, Option, Artifact, Claim, revision, blocker,
 scheduling, timeout or release effect. Only explicit `option release` starts a
-fresh mutation chain. No new package, interface, persistent object, schema version,
+fresh mutation chain. Live observation itself adds no package, interface, persistent object, schema version,
 provider protocol, event/RPC protocol, monitoring service or implicit control gate.
 
 Watch replays available stdout/stderr from offset zero and follows new bytes until
@@ -2027,7 +1771,7 @@ authority, four terminal log outcomes, unchanged caps, live A/M/D, repeated read
 diff including .git, readonly/none rejection, concurrent/read/bound failure isolation,
 and all existing release/authority regressions. Final verification retains gofmt,
 diff --check, full daily Linux test/vet, architecture constraints, Windows/WSL release
-acceptance and the unmodified real TestCodexExecutionBoundary.
+acceptance and the real TestCodexExecutionBoundary updated for explicit promotion and readonly source investigation.
 
 ## Windows distribution v0.1.0 (2026-09-22)
 
