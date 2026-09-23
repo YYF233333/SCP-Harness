@@ -67,6 +67,15 @@ func TestRecoveryProcessHelper(t *testing.T) {
 		t.Fatal("blocking worker unexpectedly returned")
 	}
 	p, e := c.Next(engine.Owner)
+	if phase == "ci" {
+		if e != nil || p == nil || p.CIRunID == "" {
+			t.Fatalf("standalone CI pending: %+v %v", p, e)
+		}
+		if _, e = c.PrepareCI(*p, engine.Owner); e != nil {
+			t.Fatal(e)
+		}
+		os.Exit(91)
+	}
 	if e != nil || p == nil || p.Operation != "promotion" {
 		t.Fatalf("promotion pending: %v", e)
 	}
@@ -110,6 +119,51 @@ func crashCommand(t *testing.T, path, phase string) boundedexec.Command {
 	}
 	return boundedexec.Command{Argv: []string{exe, "-test.run=^TestRecoveryProcessHelper$", "-test.v"}, Env: []string{"SCP_TEST_CRASH_PHASE=" + phase, "SCP_TEST_CONFIG=" + path}, Timeout: 60 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20}
 }
+func TestStandaloneCICrashRecovery(t *testing.T) {
+	engine, task, option, a := candidate(t, "fake-reviewer-approve")
+	c := engine.Core
+	step(t, engine)
+	step(t, engine)
+	ci, e := c.QueueCI(a.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	queued, e := c.QueueCI(a.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	before := state(t, c).Accounts[option.ID].Remaining
+	r, e := boundedexec.Run(context.Background(), crashCommand(t, saveConfig(t, c), "ci"))
+	if e != nil || r.ExitCode != 91 {
+		t.Fatalf("CI crash helper: %v exit=%d %s %s", e, r.ExitCode, r.Stdout, r.Stderr)
+	}
+	s := state(t, c)
+	if s.CIRuns[ci.ID].Status != "PREPARING" || s.Leases[ci.ID] == nil || s.Pending[task.ID] == nil {
+		t.Fatal("CI admission was not durable before crash")
+	}
+	for i := 0; i < 2; i++ {
+		if _, e = New(c).Recover(context.Background()); e != nil {
+			t.Fatal(e)
+		}
+		s = state(t, c)
+		ended := s.CIRuns[ci.ID]
+		if ended.Status != "TERMINATED" || ended.Ended == "" || ended.Elapsed != ended.Lease || s.Accounts[option.ID].Remaining != before-ended.Lease {
+			t.Fatal("interrupted CI was not settled exactly once")
+		}
+		if s.Slot.State != "IDLE" || s.Pending[task.ID] != nil || len(s.Leases) != 0 || s.Tasks[task.ID].Resources.Outstanding != 0 {
+			t.Fatal("CI recovery retained execution state")
+		}
+		if len(s.Requests) != 1 || s.Requests[0].CIRunID != queued.ID || s.CIRuns[queued.ID].Status != "QUEUED" {
+			t.Fatal("CI recovery must remove only the interrupted request")
+		}
+	}
+	step(t, New(c))
+	s = state(t, c)
+	if s.CIRuns[queued.ID].Status != "PASS" || len(s.Requests) != 0 || s.Changes[a.ChangeID].Stage != "AWAIT_PROMOTION" {
+		t.Fatal("queued CI could not continue independently after recovery")
+	}
+}
+
 func TestPromotionJournalActualProcessCrashAndRecovery(t *testing.T) {
 	for _, phase := range []string{"before_cas", "after_cas", "conflict"} {
 		t.Run(phase, func(t *testing.T) {

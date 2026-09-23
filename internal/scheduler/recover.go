@@ -159,8 +159,8 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 		}
 		result.Attempts = append(result.Attempts, a.ID)
 	}
-	// Protected tests are leases, never worker Attempts. Their interrupted test
-	// step stays pending, and uncertain resource is fully charged.
+	// CI runs are leases, never worker Attempts. Retire interrupted execution
+	// requests along with their leases; uncertain resource is fully charged.
 	if e = c.Store.Update(func(st *model.State) error {
 		for id, l := range st.Leases {
 			if st.Attempts[id] != nil {
@@ -174,6 +174,14 @@ func (s *Scheduler) Recover(ctx context.Context) (Recovery, error) {
 				r.Status = "TERMINATED"
 				r.Ended = model.Now()
 				r.Elapsed = r.Lease
+				requests := st.Requests[:0]
+				for _, request := range st.Requests {
+					if request.CIRunID != id {
+						requests = append(requests, request)
+					}
+				}
+				st.Requests = requests
+				delete(st.Pending, task)
 			}
 			st.Touch(task)
 		}
